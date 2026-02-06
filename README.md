@@ -1,14 +1,15 @@
 ---
-title: Streamlit Template Space
+title: Soccer Analytics Ai
 emoji: 🚀
 colorFrom: red
 colorTo: red
 sdk: docker
 app_port: 8501
 tags:
-  - streamlit
+- streamlit
 pinned: false
-short_description: Streamlit template space
+short_description: soccer analytics ai
+license: mit
 ---
 
 # Welcome to Streamlit!
