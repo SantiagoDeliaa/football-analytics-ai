@@ -153,7 +153,7 @@ if uploaded_video:
                 st.info("👉 Haz clic en 'Procesar Video' para iniciar")
 
     # Process Button
-    if st.button("🚀 Procesar Video", type="primary", width="stretch"):
+    if st.button("🚀 Procesar Video", type="primary", use_container_width=True):
         if player_model is None:
             st.error("❌ Debes cargar un modelo de jugadores")
         else:
