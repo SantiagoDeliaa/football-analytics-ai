@@ -1,0 +1,40 @@
+# === Python Core ===
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# === Data & Media (Ignored to save space) ===
+inputs/
+outputs/
+videos/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.png
+*.jpg
+*.jpeg
+
+# === Models (Heavy files - Download via scripts) ===
+models/
+*.pt
+*.onnx
+*.engine
+
+# === IDE & System ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === Logs & Temp ===
+*.log
+*.tmp
+.pytest_cache/
+.coverage
+htmlcov/
+
+
