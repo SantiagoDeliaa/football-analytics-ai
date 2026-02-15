@@ -531,7 +531,8 @@ def process_video(
     conf: float = 0.3,
     detection_mode: str = "players_and_ball",
     img_size: int = 640,
-    full_field_approx: bool = False
+    full_field_approx: bool = False,
+    progress_callback=None
 ):
     """
     Procesa video completo con detección y tracking mejorado usando múltiples modelos.
@@ -560,6 +561,7 @@ def process_video(
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(target_path, fourcc, fps, (width, height))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     # Trackers
     person_tracker = sv.ByteTrack()
@@ -679,6 +681,11 @@ def process_video(
                 break
 
             frame_count += 1
+            if progress_callback and total_frames > 0 and frame_count % 10 == 0:
+                try:
+                    progress_callback(frame_count / max(1, total_frames), frame_count, total_frames)
+                except Exception:
+                    pass
             annotated_frame = frame.copy()
 
             # --- DETECCIÓN DE JUGADORES ---
@@ -1095,6 +1102,11 @@ def process_video(
             out.write(annotated_frame)
 
         # --- GENERAR ESTADÍSTICAS FINALES ---
+        if progress_callback and total_frames > 0:
+            try:
+                progress_callback(1.0, frame_count, total_frames)
+            except Exception:
+                pass
         print("Generando estadísticas tácticas...")
 
         def get_dominant_formation(formations_list):
