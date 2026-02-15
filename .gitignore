@@ -37,4 +37,5 @@ Thumbs.db
 .coverage
 htmlcov/
 
-
+# Ignorar todos los videos (recomendado para no renegar a futuro)
+*.mp4

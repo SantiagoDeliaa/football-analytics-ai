@@ -170,6 +170,10 @@ if uploaded_video:
                     progress_bar.progress(10)
 
                     # Process video
+                    def _on_progress(ratio, frame, total):
+                        percent = min(99, 10 + int(80 * ratio))
+                        progress_bar.progress(percent)
+                        status_placeholder.text(f"Procesando... {percent}% ({frame}/{total})")
                     process_video(
                         source_path=str(input_path),
                         target_path=str(target_path),
@@ -178,7 +182,9 @@ if uploaded_video:
                         pitch_model=pitch_model,
                         conf=0.3,
                         detection_mode="players_and_ball",
-                        full_field_approx=full_field_approx
+                        img_size=512,
+                        full_field_approx=full_field_approx,
+                        progress_callback=_on_progress
                     )
 
                     progress_bar.progress(90)
@@ -262,7 +268,7 @@ if uploaded_video:
                 }
 
                 df_comparison = pd.DataFrame(comparison_data)
-                st.dataframe(df_comparison, width="stretch", hide_index=True)
+                st.dataframe(df_comparison, use_container_width=True, hide_index=True)
 
                 # Detailed metrics
                 with st.expander("Ver métricas detalladas"):
