@@ -8,10 +8,11 @@ Métricas implementadas:
 - Amplitud ofensiva (dispersión horizontal)
 - Centroide del equipo
 - Stretch Index (elongación)
+- Métricas de scouting: block compactness + dual defensive line height
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 from scipy.spatial import ConvexHull
 from collections import deque
 
@@ -30,6 +31,15 @@ class TacticalMetricsCalculator:
         self.field_width = field_width
         self.field_length = field_length
 
+    def _clamp_positions(self, positions: np.ndarray) -> np.ndarray:
+        if positions is None or len(positions) == 0:
+            return np.array([], dtype=np.float32).reshape(0, 2)
+
+        positions = np.asarray(positions, dtype=np.float32).copy()
+        positions[:, 0] = np.clip(positions[:, 0], 0, 105)
+        positions[:, 1] = np.clip(positions[:, 1], 0, 68)
+        return positions
+
     def calculate_all_metrics(self, positions: np.ndarray) -> Dict:
         """
         Calcula todas las métricas para un conjunto de posiciones.
@@ -40,8 +50,24 @@ class TacticalMetricsCalculator:
         Returns:
             Dict con todas las métricas calculadas
         """
+        positions = self._clamp_positions(positions)
+
         if len(positions) < 3:
-            return self._empty_metrics()
+            metrics = self._empty_metrics()
+            block_compactness = self.calculate_block_compactness(positions)
+            def_line = self.calculate_defensive_line_height_dual(positions)
+            metrics.update({
+                'block_depth_m': block_compactness['depth_m'],
+                'block_width_m': block_compactness['width_m'],
+                'block_area_m2': block_compactness['area_m2'],
+                'def_line_left_m': def_line['def_line_left_m'],
+                'def_line_right_m': def_line['def_line_right_m'],
+                'num_players': len(positions),
+            })
+            return metrics
+
+        block_compactness = self.calculate_block_compactness(positions)
+        def_line = self.calculate_defensive_line_height_dual(positions)
 
         return {
             'compactness': self.calculate_compactness(positions),
@@ -50,76 +76,39 @@ class TacticalMetricsCalculator:
             'centroid': self.calculate_centroid(positions),
             'stretch_index': self.calculate_stretch_index(positions),
             'defensive_depth': self.calculate_defensive_depth(positions),
+            'block_depth_m': block_compactness['depth_m'],
+            'block_width_m': block_compactness['width_m'],
+            'block_area_m2': block_compactness['area_m2'],
+            'def_line_left_m': def_line['def_line_left_m'],
+            'def_line_right_m': def_line['def_line_right_m'],
             'num_players': len(positions)
         }
 
     def calculate_compactness(self, positions: np.ndarray) -> float:
-        """
-        Calcula la compactación del equipo (área ocupada).
-
-        Compactación = Área del polígono convexo que contiene a los jugadores
-
-        Menor área = Mayor compactación (equipo más junto)
-        Mayor área = Menor compactación (equipo más disperso)
-
-        Returns:
-            Área en metros cuadrados
-        """
         if len(positions) < 3:
             return 0.0
 
         try:
             hull = ConvexHull(positions)
-            area = hull.volume  # En 2D, 'volume' es el área
+            area = hull.volume
             return float(area)
         except Exception:
-            # Si los puntos son colineales, calcular área del rectángulo
             x_range = positions[:, 0].max() - positions[:, 0].min()
             y_range = positions[:, 1].max() - positions[:, 1].min()
-            return x_range * y_range
+            return float(x_range * y_range)
 
     def calculate_pressure_height(self, positions: np.ndarray) -> float:
-        """
-        Calcula la altura de presión del equipo.
-
-        Presión = Posición X promedio de los jugadores
-
-        Valores altos = Presión alta (cerca del arco rival)
-        Valores bajos = Presión baja (cerca del arco propio)
-
-        Returns:
-            Posición X promedio en metros (0-105)
-        """
         if len(positions) == 0:
             return 0.0
-
         return float(np.mean(positions[:, 0]))
 
     def calculate_offensive_width(self, positions: np.ndarray) -> float:
-        """
-        Calcula la amplitud ofensiva (dispersión horizontal).
-
-        Amplitud = Rango en el eje Y (ancho del campo ocupado)
-
-        Mayor valor = Mayor amplitud (equipo estirado horizontalmente)
-        Menor valor = Menor amplitud (equipo concentrado al centro)
-
-        Returns:
-            Amplitud en metros (0-68)
-        """
         if len(positions) == 0:
             return 0.0
-
         y_range = positions[:, 1].max() - positions[:, 1].min()
         return float(y_range)
 
     def calculate_centroid(self, positions: np.ndarray) -> Tuple[float, float]:
-        """
-        Calcula el centroide (centro geométrico) del equipo.
-
-        Returns:
-            Tupla (x, y) con el centroide en metros
-        """
         if len(positions) == 0:
             return (0.0, 0.0)
 
@@ -128,60 +117,64 @@ class TacticalMetricsCalculator:
         return (centroid_x, centroid_y)
 
     def calculate_stretch_index(self, positions: np.ndarray) -> float:
-        """
-        Calcula el índice de elongación del equipo.
-
-        Stretch Index = Desviación estándar de posiciones X / Desviación estándar de posiciones Y
-
-        > 1.0 = Equipo más estirado verticalmente (en profundidad)
-        < 1.0 = Equipo más estirado horizontalmente (en amplitud)
-        ~ 1.0 = Equipo equilibrado
-
-        Returns:
-            Ratio de elongación
-        """
         if len(positions) < 2:
             return 1.0
 
         std_x = np.std(positions[:, 0])
         std_y = np.std(positions[:, 1])
 
-        if std_y < 0.1:  # Evitar división por cero
+        if std_y < 0.1:
             return 10.0 if std_x > 0.1 else 1.0
 
         return float(std_x / std_y)
 
     def calculate_defensive_depth(self, positions: np.ndarray) -> float:
-        """
-        Calcula la profundidad defensiva (distancia entre jugador más adelantado y más retrasado).
-
-        Returns:
-            Profundidad en metros
-        """
         if len(positions) == 0:
             return 0.0
 
         x_range = positions[:, 0].max() - positions[:, 0].min()
         return float(x_range)
 
-    def calculate_defensive_block_compactness(self, positions: np.ndarray) -> float:
+    def calculate_block_compactness(self, positions: np.ndarray) -> Dict[str, float]:
         """
-        Calcula la compactación del bloque defensivo (jugadores más retrasados).
-
-        Returns:
-            Área del 50% de jugadores más retrasados
+        Block compactness por bounding box del bloque del equipo.
         """
-        if len(positions) < 4:
-            return self.calculate_compactness(positions)
+        if len(positions) < 2:
+            return {'depth_m': 0.0, 'width_m': 0.0, 'area_m2': 0.0}
 
-        # Tomar mitad de jugadores más retrasados
-        sorted_by_x = positions[np.argsort(positions[:, 0])]
-        defensive_half = sorted_by_x[:len(positions)//2]
+        positions = self._clamp_positions(positions)
+        x_vals = positions[:, 0]
+        y_vals = positions[:, 1]
 
-        return self.calculate_compactness(defensive_half)
+        depth_m = float(np.max(x_vals) - np.min(x_vals))
+        width_m = float(np.max(y_vals) - np.min(y_vals))
+        area_m2 = float(depth_m * width_m)
+
+        return {
+            'depth_m': depth_m,
+            'width_m': width_m,
+            'area_m2': area_m2,
+        }
+
+    def calculate_defensive_line_height_dual(self, positions: np.ndarray) -> Dict[str, float]:
+        """
+        Calcula dos alturas de línea defensiva:
+        - def_line_left_m: promedio de los N jugadores con menor X (defendiendo x=0)
+        - def_line_right_m: promedio de los N jugadores con mayor X (defendiendo x=105)
+        """
+        if len(positions) == 0:
+            return {'def_line_left_m': 0.0, 'def_line_right_m': 0.0}
+
+        positions = self._clamp_positions(positions)
+        x_vals = np.sort(positions[:, 0])
+        n = min(4, len(x_vals))
+
+        return {
+            'def_line_left_m': float(np.mean(x_vals[:n])),
+            'def_line_right_m': float(np.mean(x_vals[-n:])),
+        }
 
     def _empty_metrics(self) -> Dict:
-        """Retorna métricas vacías cuando no hay suficientes jugadores."""
         return {
             'compactness': 0.0,
             'pressure_height': 0.0,
@@ -189,6 +182,11 @@ class TacticalMetricsCalculator:
             'centroid': (0.0, 0.0),
             'stretch_index': 1.0,
             'defensive_depth': 0.0,
+            'block_depth_m': 0.0,
+            'block_width_m': 0.0,
+            'block_area_m2': 0.0,
+            'def_line_left_m': 0.0,
+            'def_line_right_m': 0.0,
             'num_players': 0
         }
 
@@ -199,11 +197,8 @@ class TacticalMetricsTracker:
     """
 
     def __init__(self, history_size: int = 300):
-        """
-        Args:
-            history_size: Número de frames a mantener en historia (default: 300 = ~10 seg a 30fps)
-        """
         self.history_size = history_size
+        self.valid_frames_count = 0
         self.metrics_history = {
             'compactness': deque(maxlen=history_size),
             'pressure_height': deque(maxlen=history_size),
@@ -212,17 +207,15 @@ class TacticalMetricsTracker:
             'centroid_y': deque(maxlen=history_size),
             'stretch_index': deque(maxlen=history_size),
             'defensive_depth': deque(maxlen=history_size),
+            'block_depth_m': deque(maxlen=history_size),
+            'block_width_m': deque(maxlen=history_size),
+            'block_area_m2': deque(maxlen=history_size),
+            'def_line_left_m': deque(maxlen=history_size),
+            'def_line_right_m': deque(maxlen=history_size),
             'frame_number': deque(maxlen=history_size)
         }
 
     def update(self, metrics: Dict, frame_number: int):
-        """
-        Actualiza el historial con nuevas métricas.
-
-        Args:
-            metrics: Dict con métricas del frame actual
-            frame_number: Número del frame
-        """
         self.metrics_history['compactness'].append(metrics['compactness'])
         self.metrics_history['pressure_height'].append(metrics['pressure_height'])
         self.metrics_history['offensive_width'].append(metrics['offensive_width'])
@@ -230,15 +223,17 @@ class TacticalMetricsTracker:
         self.metrics_history['centroid_y'].append(metrics['centroid'][1])
         self.metrics_history['stretch_index'].append(metrics['stretch_index'])
         self.metrics_history['defensive_depth'].append(metrics['defensive_depth'])
+        self.metrics_history['block_depth_m'].append(metrics.get('block_depth_m', 0.0))
+        self.metrics_history['block_width_m'].append(metrics.get('block_width_m', 0.0))
+        self.metrics_history['block_area_m2'].append(metrics.get('block_area_m2', 0.0))
+        self.metrics_history['def_line_left_m'].append(metrics.get('def_line_left_m', 0.0))
+        self.metrics_history['def_line_right_m'].append(metrics.get('def_line_right_m', 0.0))
         self.metrics_history['frame_number'].append(frame_number)
 
-    def get_statistics(self) -> Dict:
-        """
-        Calcula estadísticas sobre las métricas históricas.
+        if metrics.get('num_players', 0) >= 2:
+            self.valid_frames_count += 1
 
-        Returns:
-            Dict con media, std, min, max para cada métrica
-        """
+    def get_statistics(self) -> Dict:
         stats = {}
 
         for metric_name, values in self.metrics_history.items():
@@ -258,19 +253,10 @@ class TacticalMetricsTracker:
                 'current': float(values_array[-1]) if len(values_array) > 0 else 0.0
             }
 
+        stats['valid_frames'] = self.valid_frames_count
         return stats
 
     def get_trend(self, metric_name: str, window: int = 30) -> str:
-        """
-        Determina la tendencia de una métrica (creciente, decreciente, estable).
-
-        Args:
-            metric_name: Nombre de la métrica
-            window: Ventana para calcular tendencia
-
-        Returns:
-            "increasing", "decreasing", "stable"
-        """
         if metric_name not in self.metrics_history:
             return "unknown"
 
@@ -285,7 +271,7 @@ class TacticalMetricsTracker:
 
         change_pct = abs((second_half - first_half) / first_half) * 100 if first_half != 0 else 0
 
-        if change_pct < 5:  # Menos del 5% de cambio
+        if change_pct < 5:
             return "stable"
         elif second_half > first_half:
             return "increasing"
@@ -293,24 +279,12 @@ class TacticalMetricsTracker:
             return "decreasing"
 
     def export_to_dict(self) -> Dict:
-        """
-        Exporta todo el historial a un diccionario (para guardar en JSON/CSV).
-
-        Returns:
-            Dict con arrays de métricas por frame
-        """
         return {
             metric_name: list(values)
             for metric_name, values in self.metrics_history.items()
         }
 
     def export_to_arrays(self) -> Dict[str, np.ndarray]:
-        """
-        Exporta historial como arrays de NumPy (para gráficos).
-
-        Returns:
-            Dict con arrays de NumPy por métrica
-        """
         return {
             metric_name: np.array(list(values))
             for metric_name, values in self.metrics_history.items()
