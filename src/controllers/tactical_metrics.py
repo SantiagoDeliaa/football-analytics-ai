@@ -41,7 +41,12 @@ class TacticalMetricsCalculator:
             Dict con todas las métricas calculadas
         """
         if len(positions) < 3:
-            return self._empty_metrics()
+            empty = self._empty_metrics()
+            empty['num_players'] = len(positions)
+            return empty
+
+        block = self.calculate_block_compactness(positions)
+        def_line = self.calculate_defensive_line_height_dual(positions)
 
         return {
             'compactness': self.calculate_compactness(positions),
@@ -50,8 +55,34 @@ class TacticalMetricsCalculator:
             'centroid': self.calculate_centroid(positions),
             'stretch_index': self.calculate_stretch_index(positions),
             'defensive_depth': self.calculate_defensive_depth(positions),
+            'block_depth_m': block['depth_m'],
+            'block_width_m': block['width_m'],
+            'block_area_m2': block['area_m2'],
+            'def_line_left_m': def_line['def_line_left_m'],
+            'def_line_right_m': def_line['def_line_right_m'],
             'num_players': len(positions)
         }
+
+    def calculate_block_compactness(self, positions: np.ndarray) -> Dict:
+        if len(positions) < 2:
+            return {'depth_m': 0.0, 'width_m': 0.0, 'area_m2': 0.0}
+        x = np.clip(positions[:, 0], 0, 105)
+        y = np.clip(positions[:, 1], 0, 68)
+        depth = float(np.max(x) - np.min(x))
+        width = float(np.max(y) - np.min(y))
+        area = float(depth * width)
+        return {'depth_m': depth, 'width_m': width, 'area_m2': area}
+
+    def calculate_defensive_line_height_dual(self, positions: np.ndarray) -> Dict:
+        if len(positions) == 0:
+            return {'def_line_left_m': 0.0, 'def_line_right_m': 0.0}
+        x = np.clip(positions[:, 0], 0, 105)
+        order = np.argsort(x)
+        x_sorted = x[order]
+        n = int(min(4, len(x_sorted)))
+        left = float(np.mean(x_sorted[:n])) if n > 0 else 0.0
+        right = float(np.mean(x_sorted[-n:])) if n > 0 else 0.0
+        return {'def_line_left_m': left, 'def_line_right_m': right}
 
     def calculate_compactness(self, positions: np.ndarray) -> float:
         """
@@ -212,8 +243,14 @@ class TacticalMetricsTracker:
             'centroid_y': deque(maxlen=history_size),
             'stretch_index': deque(maxlen=history_size),
             'defensive_depth': deque(maxlen=history_size),
+            'block_depth_m': deque(maxlen=history_size),
+            'block_width_m': deque(maxlen=history_size),
+            'block_area_m2': deque(maxlen=history_size),
+            'def_line_left_m': deque(maxlen=history_size),
+            'def_line_right_m': deque(maxlen=history_size),
             'frame_number': deque(maxlen=history_size)
         }
+        self.valid_frames_count = 0
 
     def update(self, metrics: Dict, frame_number: int):
         """
@@ -223,14 +260,22 @@ class TacticalMetricsTracker:
             metrics: Dict con métricas del frame actual
             frame_number: Número del frame
         """
-        self.metrics_history['compactness'].append(metrics['compactness'])
-        self.metrics_history['pressure_height'].append(metrics['pressure_height'])
-        self.metrics_history['offensive_width'].append(metrics['offensive_width'])
-        self.metrics_history['centroid_x'].append(metrics['centroid'][0])
-        self.metrics_history['centroid_y'].append(metrics['centroid'][1])
-        self.metrics_history['stretch_index'].append(metrics['stretch_index'])
-        self.metrics_history['defensive_depth'].append(metrics['defensive_depth'])
+        self.metrics_history['compactness'].append(metrics.get('compactness', 0.0))
+        self.metrics_history['pressure_height'].append(metrics.get('pressure_height', 0.0))
+        self.metrics_history['offensive_width'].append(metrics.get('offensive_width', 0.0))
+        centroid = metrics.get('centroid', (0.0, 0.0))
+        self.metrics_history['centroid_x'].append(centroid[0])
+        self.metrics_history['centroid_y'].append(centroid[1])
+        self.metrics_history['stretch_index'].append(metrics.get('stretch_index', 1.0))
+        self.metrics_history['defensive_depth'].append(metrics.get('defensive_depth', 0.0))
+        self.metrics_history['block_depth_m'].append(metrics.get('block_depth_m', 0.0))
+        self.metrics_history['block_width_m'].append(metrics.get('block_width_m', 0.0))
+        self.metrics_history['block_area_m2'].append(metrics.get('block_area_m2', 0.0))
+        self.metrics_history['def_line_left_m'].append(metrics.get('def_line_left_m', 0.0))
+        self.metrics_history['def_line_right_m'].append(metrics.get('def_line_right_m', 0.0))
         self.metrics_history['frame_number'].append(frame_number)
+        if metrics.get('num_players', 0) >= 2:
+            self.valid_frames_count += 1
 
     def get_statistics(self) -> Dict:
         """
@@ -258,6 +303,7 @@ class TacticalMetricsTracker:
                 'current': float(values_array[-1]) if len(values_array) > 0 else 0.0
             }
 
+        stats['valid_frames'] = self.valid_frames_count
         return stats
 
     def get_trend(self, metric_name: str, window: int = 30) -> str:
