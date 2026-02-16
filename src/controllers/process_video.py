@@ -7,6 +7,7 @@ from collections import deque, Counter
 import json
 from pathlib import Path
 from src.utils.view_transformer import ViewTransformer
+from src.utils.homography_manager import HomographyManager
 from src.utils.radar import SoccerPitchConfiguration, draw_radar_view
 from src.controllers.formation_detector import FormationDetector
 from src.controllers.tactical_metrics import TacticalMetricsCalculator, TacticalMetricsTracker
@@ -595,6 +596,16 @@ def process_video(
         # Crear configuración con el tipo correcto
         pitch_config = SoccerPitchConfiguration(model_type=pitch_model_type)
 
+    homography_manager = None
+    if pitch_config:
+        homography_manager = HomographyManager(
+            spread_threshold=0.30,
+            max_inertia_frames=30,
+            alpha=0.15,
+            min_points=4,
+            debug=False,
+        )
+
     # Anotadores
     team1_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
     team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
@@ -898,7 +909,7 @@ def process_video(
             # --- RADAR ---
             if pitch_config:  # Si hay configuración de pitch (ya sea por modelo o approx)
                 transformer = None
-                
+
                 # Caso A: Modelo de Pitch disponible
                 if pitch_model:
                     try:
@@ -913,46 +924,21 @@ def process_video(
                             # Soccana: 0.05 para capturar keypoints de áreas penales (baja confianza)
                             # Roboflow: 0.5 (alta confianza requerida)
                             conf_threshold = 0.05 if pitch_model_type == 'soccana' else 0.5
-                            valid_kp_mask = keypoints_conf > conf_threshold
-                            valid_keypoints = keypoints_xy[valid_kp_mask]
-                            valid_indices = np.where(valid_kp_mask)[0]
-
-                            # Filtrar keypoints que NO tienen mapeo en la configuración del pitch
-                            # Esto es crucial si el modelo detecta keypoints que no están en el mapa (ej. modelo Roboflow sin librería sports)
-                            mapped_indices_mask = np.isin(valid_indices, list(pitch_config.keypoints_map.keys()))
-                            valid_indices = valid_indices[mapped_indices_mask]
-                            valid_keypoints = valid_keypoints[mapped_indices_mask]
-
-                            # Usar todos los keypoints válidos (RANSAC manejará outliers)
-                            if len(valid_keypoints) >= 4:
-                                # Verificar distribución de keypoints (no solo círculo central)
-                                # Calcular dispersión en X e Y
-                                x_range = valid_keypoints[:, 0].max() - valid_keypoints[:, 0].min()
-                                y_range = valid_keypoints[:, 1].max() - valid_keypoints[:, 1].min()
-
-                                # Si los keypoints están muy concentrados (solo círculo central),
-                                # la homografía será inestable
-                                min_spread = width * 0.3  # Al menos 30% del ancho
-                                well_distributed = x_range > min_spread or y_range > min_spread
-
-                                if well_distributed:
-                                    target_points = pitch_config.get_keypoints_from_ids(valid_indices)
-                                    transformer = ViewTransformer(valid_keypoints, target_points)
-
-                                    # Verificar si la homografía se calculó correctamente
-                                    if transformer.m is None:
-                                        if frame_count % 100 == 0:
-                                            print(f"Frame {frame_count}: Homografía fallida (matriz singular), usando aproximación")
-                                        transformer = None
-                                    elif frame_count % 100 == 0:
-                                        print(f"Frame {frame_count}: Homografía OK con {len(valid_keypoints)} keypoints")
-                                else:
-                                    if frame_count % 100 == 0:
-                                        print(f"Frame {frame_count}: Keypoints mal distribuidos (spread: {x_range:.0f}x{y_range:.0f}), usando aproximación")
-                                    transformer = None
+                            homography_manager.update(
+                                keypoints_xy=keypoints_xy,
+                                keypoints_conf=keypoints_conf,
+                                pitch_config=pitch_config,
+                                frame_width=width,
+                                conf_threshold=conf_threshold,
+                                frame_count=frame_count,
+                            )
                     except Exception as e:
                         if frame_count % 100 == 0:
                             print(f"Error en inferencia de pitch (frame {frame_count}): {e}")
+
+                # Reusar homografía con memoria temporal cuando esté disponible
+                if homography_manager:
+                    transformer = homography_manager.get_transformer(flip_x=True)
 
                 # Caso B: Aproximación de Campo Completo (MEJORADA)
                 # Se usa si: 1) full_field_approx=True, o 2) modelo de pitch falló
