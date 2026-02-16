@@ -606,6 +606,16 @@ def process_video(
             debug=False,
         )
 
+    homography_manager = None
+    if pitch_config:
+        homography_manager = HomographyManager(
+            spread_threshold=0.30,
+            max_inertia_frames=30,
+            alpha=0.15,
+            min_points=4,
+            debug=False,
+        )
+
     # Anotadores
     team1_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
     team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
@@ -635,6 +645,14 @@ def process_video(
     # Suavizado temporal para posiciones en radar
     radar_positions_history = {}  # tracker_id -> deque de posiciones (x, y)
     RADAR_SMOOTH_WINDOW = 5       # Ventana de suavizado (5 frames)
+
+    # Heatmaps de scouting (memoria constante por bins)
+    heatmap_bins_team1 = np.zeros((53, 34), dtype=np.float32)
+    heatmap_bins_team2 = np.zeros((53, 34), dtype=np.float32)
+    heatmap_sample_every = 5
+    heatmap_samples_count = 0
+    valid_projection_frames = 0
+    debug_scouting = False
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1057,6 +1075,31 @@ def process_video(
                             
                             metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
                             team2_tracker.update(metrics2, frame_count)
+
+                        # --- HEATMAP SCOUTING (solo frames con proyección válida) ---
+                        valid_projection_frames += 1
+                        if valid_projection_frames % heatmap_sample_every == 0:
+                            for team_name, heatmap_bins in [
+                                ('team1', heatmap_bins_team1),
+                                ('team2', heatmap_bins_team2),
+                            ]:
+                                team_points = points_to_transform.get(team_name)
+                                if team_points is None or len(team_points) == 0:
+                                    continue
+
+                                for x, y in team_points:
+                                    x = float(np.clip(x, 0, 105))
+                                    y = float(np.clip(y, 0, 68))
+                                    xi = int(x * 53 / 105)
+                                    yi = int(y * 34 / 68)
+                                    xi = max(0, min(xi, 52))
+                                    yi = max(0, min(yi, 33))
+                                    heatmap_bins[xi, yi] += 1.0
+
+                            heatmap_samples_count += 1
+
+                        if debug_scouting and frame_count % 100 == 0:
+                            print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
                         radar_view = draw_radar_view(pitch_config, points_to_transform, scale=8)
 
@@ -1105,6 +1148,27 @@ def process_video(
         team1_stats = team1_tracker.get_statistics()
         team2_stats = team2_tracker.get_statistics()
 
+        # --- POSTPROCESADO DE HEATMAPS SCOUTING ---
+        def build_heatmap_artifacts(heatmap_bins: np.ndarray, team_name: str):
+            heatmap_smooth = cv2.GaussianBlur(heatmap_bins, (5, 5), 0)
+
+            if heatmap_smooth.max() > 0:
+                heatmap_norm = (heatmap_smooth / heatmap_smooth.max() * 255).astype(np.uint8)
+            else:
+                heatmap_norm = np.zeros_like(heatmap_smooth, dtype=np.uint8)
+
+            heatmap_color = cv2.applyColorMap(heatmap_norm, cv2.COLORMAP_JET)
+            heatmap_png_path = Path(target_path).parent / f"heatmap_{team_name}.png"
+            cv2.imwrite(str(heatmap_png_path), heatmap_color)
+
+            # Downsample 2x2 con max pooling (53x34 -> crop a 52x34 -> 26x17)
+            heatmap_pool_src = heatmap_norm[:52, :34]
+            heatmap_down = heatmap_pool_src.reshape(26, 2, 17, 2).max(axis=(1, 3))
+            return heatmap_down.tolist()
+
+        heatmap_list_team1 = build_heatmap_artifacts(heatmap_bins_team1, 'team1')
+        heatmap_list_team2 = build_heatmap_artifacts(heatmap_bins_team2, 'team2')
+
         stats_data = {
             'total_frames': frame_count,
             'duration_seconds': frame_count / fps if fps > 0 else 0,
@@ -1125,6 +1189,15 @@ def process_video(
             'timeline': {
                 'team1': team1_tracker.export_to_dict(),
                 'team2': team2_tracker.export_to_dict()
+            },
+            'scouting_heatmaps': {
+                'team1': heatmap_list_team1,
+                'team2': heatmap_list_team2,
+                'bins_shape': [26, 17],
+                'field_dims_m': [105, 68],
+                'bin_size_m': [4.04, 4.0],
+                'total_samples': heatmap_samples_count,
+                'sample_rate': heatmap_sample_every
             }
         }
 
