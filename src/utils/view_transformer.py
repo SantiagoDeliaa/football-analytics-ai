@@ -2,21 +2,16 @@ import numpy as np
 import cv2
 
 class ViewTransformer:
-    def __init__(self, source: np.ndarray, target: np.ndarray):
-        """
-        Initialize ViewTransformer with source and target points.
-        
-        Args:
-            source: Array of shape (N, 2) containing source points (pixels).
-            target: Array of shape (N, 2) containing target points (meters/world coordinates).
-        """
-        source = source.astype(np.float32)
-        target = target.astype(np.float32)
-        # Usar RANSAC para robustez si hay suficientes puntos
-        if len(source) >= 4:
-            self.m, _ = cv2.findHomography(source, target, cv2.RANSAC, 5.0)
+    def __init__(self, source: np.ndarray = None, target: np.ndarray = None, m: np.ndarray = None):
+        if m is not None:
+            self.m = m.astype(np.float32)
         else:
-            self.m = None
+            source = source.astype(np.float32) if source is not None else None
+            target = target.astype(np.float32) if target is not None else None
+            if source is not None and target is not None and len(source) >= 4:
+                self.m, _ = cv2.findHomography(source, target, cv2.RANSAC, 5.0)
+            else:
+                self.m = None
 
     def transform_points(self, points: np.ndarray, flip_x: bool = False) -> np.ndarray:
         """

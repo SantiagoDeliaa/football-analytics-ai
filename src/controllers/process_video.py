@@ -7,6 +7,7 @@ from collections import deque, Counter
 import json
 from pathlib import Path
 from src.utils.view_transformer import ViewTransformer
+from src.utils.homography_manager import HomographyManager
 from src.utils.radar import SoccerPitchConfiguration, draw_radar_view
 from src.controllers.formation_detector import FormationDetector
 from src.controllers.tactical_metrics import TacticalMetricsCalculator, TacticalMetricsTracker
@@ -594,6 +595,7 @@ def process_video(
 
         # Crear configuración con el tipo correcto
         pitch_config = SoccerPitchConfiguration(model_type=pitch_model_type)
+        homography_manager = HomographyManager()
 
     # Anotadores
     team1_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
@@ -624,6 +626,7 @@ def process_video(
     # Suavizado temporal para posiciones en radar
     radar_positions_history = {}  # tracker_id -> deque de posiciones (x, y)
     RADAR_SMOOTH_WINDOW = 5       # Ventana de suavizado (5 frames)
+    debug_homography_overlay: bool = True
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -902,67 +905,27 @@ def process_video(
                 # Caso A: Modelo de Pitch disponible
                 if pitch_model:
                     try:
-                        # Usar un umbral bajo para la inferencia inicial (conf=0.01)
-                        # para no perder keypoints que podrían ser válidos para Soccana (que usa 0.05)
                         pitch_results = pitch_model(frame, verbose=False, conf=0.01)[0]
                         if pitch_results.keypoints is not None and len(pitch_results.keypoints) > 0:
                             keypoints_xy = pitch_results.keypoints.xy.cpu().numpy()[0]
                             keypoints_conf = pitch_results.keypoints.conf.cpu().numpy()[0]
-
-                            # Umbral adaptativo optimizado:
-                            # Soccana: 0.05 para capturar keypoints de áreas penales (baja confianza)
-                            # Roboflow: 0.5 (alta confianza requerida)
                             conf_threshold = 0.05 if pitch_model_type == 'soccana' else 0.5
                             valid_kp_mask = keypoints_conf > conf_threshold
                             valid_keypoints = keypoints_xy[valid_kp_mask]
                             valid_indices = np.where(valid_kp_mask)[0]
-
-                            # Filtrar keypoints que NO tienen mapeo en la configuración del pitch
-                            # Esto es crucial si el modelo detecta keypoints que no están en el mapa (ej. modelo Roboflow sin librería sports)
                             mapped_indices_mask = np.isin(valid_indices, list(pitch_config.keypoints_map.keys()))
                             valid_indices = valid_indices[mapped_indices_mask]
                             valid_keypoints = valid_keypoints[mapped_indices_mask]
-
-                            # Usar todos los keypoints válidos (RANSAC manejará outliers)
                             if len(valid_keypoints) >= 4:
-                                # Verificar distribución de keypoints (no solo círculo central)
-                                # Calcular dispersión en X e Y
-                                x_range = valid_keypoints[:, 0].max() - valid_keypoints[:, 0].min()
-                                y_range = valid_keypoints[:, 1].max() - valid_keypoints[:, 1].min()
-
-                                # Si los keypoints están muy concentrados (solo círculo central),
-                                # la homografía será inestable
-                                min_spread = width * 0.3  # Al menos 30% del ancho
-                                well_distributed = x_range > min_spread or y_range > min_spread
-
-                                if well_distributed:
-                                    target_points = pitch_config.get_keypoints_from_ids(valid_indices)
-                                    transformer = ViewTransformer(valid_keypoints, target_points)
-
-                                    # Verificar si la homografía se calculó correctamente
-                                    if transformer.m is None:
-                                        if frame_count % 100 == 0:
-                                            print(f"Frame {frame_count}: Homografía fallida (matriz singular), usando aproximación")
-                                        transformer = None
-                                    elif frame_count % 100 == 0:
-                                        print(f"Frame {frame_count}: Homografía OK con {len(valid_keypoints)} keypoints")
-                                else:
-                                    if frame_count % 100 == 0:
-                                        print(f"Frame {frame_count}: Keypoints mal distribuidos (spread: {x_range:.0f}x{y_range:.0f}), usando aproximación")
-                                    transformer = None
+                                target_points = pitch_config.get_keypoints_from_ids(valid_indices)
+                                valid_confidences = keypoints_conf[valid_kp_mask][mapped_indices_mask]
+                                homography_manager.update(valid_keypoints, target_points, valid_confidences, (width, height))
+                                transformer = homography_manager.get_transformer()
                     except Exception as e:
                         if frame_count % 100 == 0:
                             print(f"Error en inferencia de pitch (frame {frame_count}): {e}")
 
-                # Caso B: Aproximación de Campo Completo (MEJORADA)
-                # Se usa si: 1) full_field_approx=True, o 2) modelo de pitch falló
                 if transformer is None and (full_field_approx or pitch_model):
-                    # Mejora: Usar márgenes para ajustar mejor la vista de cámara
-                    # Las cámaras de broadcast no muestran exactamente el campo completo
-                    # Típicamente hay ~5-10% de margen en los bordes
-
-                    # Detectar si hay más campo arriba (cielo/público) o abajo (línea)
-                    # Asumimos vista típica de broadcast: más espacio arriba
                     margin_top = height * 0.15     # 15% superior es cielo/público
                     margin_bottom = height * 0.05   # 5% inferior es fuera del campo
                     margin_left = width * 0.08      # 8% lateral (bancas)
@@ -987,6 +950,9 @@ def process_video(
                     ], dtype=np.float32)
 
                     transformer = ViewTransformer(source_points, target_points)
+                    homography_manager.last_state = "FULLSCREEN"
+                    if frame_count % 100 == 0:
+                        print("fallback full-screen")
 
                 # Si tenemos un transformer válido, proyectamos y dibujamos
                 if transformer:
@@ -1098,6 +1064,40 @@ def process_video(
                             annotated_frame[offset_y:offset_y+new_h, offset_x:offset_x+new_w] = blended
                     except Exception as e:
                         print(f"Error dibujando radar: {e}")
+
+            if debug_homography_overlay:
+                state = getattr(homography_manager, 'last_state', "")
+                text = None
+                color = (0, 255, 0)
+                if state.startswith("UPDATED"):
+                    if state == "UPDATED_EMA":
+                        text = "Homografia: UPDATED (EMA)"
+                    elif state == "UPDATED_SWITCH":
+                        text = "Homografia: UPDATED (SWITCH)"
+                    else:
+                        text = "Homografia: UPDATED"
+                    color = (0, 255, 0)
+                elif state == "REUSED_INERTIA":
+                    text = f"Homografia: INERCIA ({homography_manager.frames_since_valid}/{homography_manager.max_inertia_frames})"
+                    color = (0, 255, 255)
+                elif state == "FULLSCREEN":
+                    text = "Homografia: FULLSCREEN"
+                    color = (0, 0, 255)
+                else:
+                    if pitch_config and transformer is None:
+                        text = "Homografia: NO_H"
+                        color = (0, 0, 255)
+                if text is not None:
+                    cv2.putText(
+                        annotated_frame,
+                        text,
+                        (20, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        color,
+                        2,
+                        cv2.LINE_AA
+                    )
 
             out.write(annotated_frame)
 
