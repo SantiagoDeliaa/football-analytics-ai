@@ -627,6 +627,12 @@ def process_video(
     radar_positions_history = {}  # tracker_id -> deque de posiciones (x, y)
     RADAR_SMOOTH_WINDOW = 5       # Ventana de suavizado (5 frames)
     debug_homography_overlay: bool = True
+    heatmap_bins_team1 = np.zeros((53, 34), dtype=np.float32)
+    heatmap_bins_team2 = np.zeros((53, 34), dtype=np.float32)
+    heatmap_sample_every = 5
+    heatmap_samples_count = 0
+    debug_scouting = False
+    _heatmap_valid_frame_counter = 0
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1037,6 +1043,30 @@ def process_video(
                             
                             metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
                             team2_tracker.update(metrics2, frame_count)
+                        
+                        _heatmap_valid_frame_counter += 1
+                        if _heatmap_valid_frame_counter % heatmap_sample_every == 0:
+                            if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
+                                for x, y in points_to_transform['team1']:
+                                    x = float(np.clip(x, 0, 105))
+                                    y = float(np.clip(y, 0, 68))
+                                    xi = int(x * 53 / 105)
+                                    yi = int(y * 34 / 68)
+                                    xi = max(0, min(xi, 52))
+                                    yi = max(0, min(yi, 33))
+                                    heatmap_bins_team1[xi, yi] += 1.0
+                            if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
+                                for x, y in points_to_transform['team2']:
+                                    x = float(np.clip(x, 0, 105))
+                                    y = float(np.clip(y, 0, 68))
+                                    xi = int(x * 53 / 105)
+                                    yi = int(y * 34 / 68)
+                                    xi = max(0, min(xi, 52))
+                                    yi = max(0, min(yi, 33))
+                                    heatmap_bins_team2[xi, yi] += 1.0
+                            heatmap_samples_count += 1
+                            if debug_scouting and frame_count % 100 == 0:
+                                print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
                         radar_view = draw_radar_view(pitch_config, points_to_transform, scale=8)
 
@@ -1118,6 +1148,25 @@ def process_video(
         # Calcular estadísticas agregadas de métricas
         team1_stats = team1_tracker.get_statistics()
         team2_stats = team2_tracker.get_statistics()
+        hm1_smooth = cv2.GaussianBlur(heatmap_bins_team1, (5, 5), 0)
+        hm2_smooth = cv2.GaussianBlur(heatmap_bins_team2, (5, 5), 0)
+        if float(hm1_smooth.max()) > 0:
+            hm1_norm = (hm1_smooth / hm1_smooth.max() * 255).astype(np.uint8)
+        else:
+            hm1_norm = np.zeros_like(hm1_smooth, dtype=np.uint8)
+        if float(hm2_smooth.max()) > 0:
+            hm2_norm = (hm2_smooth / hm2_smooth.max() * 255).astype(np.uint8)
+        else:
+            hm2_norm = np.zeros_like(hm2_smooth, dtype=np.uint8)
+        hm1_color = cv2.applyColorMap(hm1_norm, cv2.COLORMAP_JET)
+        hm2_color = cv2.applyColorMap(hm2_norm, cv2.COLORMAP_JET)
+        if debug_scouting:
+            cv2.imwrite('heatmap_team1.png', hm1_color)
+            cv2.imwrite('heatmap_team2.png', hm2_color)
+        h1_down = hm1_norm[:52, :].reshape(26, 2, 17, 2).max(axis=(1, 3))
+        h2_down = hm2_norm[:52, :].reshape(26, 2, 17, 2).max(axis=(1, 3))
+        heatmap_list_team1 = h1_down.tolist()
+        heatmap_list_team2 = h2_down.tolist()
 
         stats_data = {
             'total_frames': frame_count,
@@ -1139,6 +1188,15 @@ def process_video(
             'timeline': {
                 'team1': team1_tracker.export_to_dict(),
                 'team2': team2_tracker.export_to_dict()
+            },
+            'scouting_heatmaps': {
+                'team1': heatmap_list_team1,
+                'team2': heatmap_list_team2,
+                'bins_shape': [26, 17],
+                'field_dims_m': [105, 68],
+                'bin_size_m': [105 / 26.0, 68 / 17.0],
+                'total_samples': heatmap_samples_count,
+                'sample_rate': heatmap_sample_every
             }
         }
 
