@@ -287,17 +287,21 @@ def draw_pitch(config: SoccerPitchConfiguration, scale=5, background_color=(0, 0
 def draw_radar_view(
     config: SoccerPitchConfiguration,
     transformed_points: Dict[str, np.ndarray],
-    scale=5
+    scale=5,
+    trails: Optional[Dict[str, List[np.ndarray]]] = None,
+    offside_x: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
     """
-    Draws the radar view with players.
+    Draws the radar view with players, optional trails, and offside lines.
     transformed_points: Dict mapping 'team1', 'team2', 'ball', 'referee' to (N, 2) arrays of coordinates in meters.
+    trails: Dict mapping category to list of (N, 2) arrays (history of positions).
+    offside_x: Dict mapping team key to X coordinate of offside line in meters.
     """
     pitch_img = draw_pitch(config, scale=scale, background_color=(34, 139, 34)) # Green pitch
-    
+
     ox = int(config.margins * scale)
     oy = int(config.margins * scale)
-    
+
     colors = {
         'team1': (0, 255, 0),     # Green (BGR) -> Lime
         'team2': (255, 191, 0),   # Sky Blueish (BGR)
@@ -305,28 +309,114 @@ def draw_radar_view(
         'referee': (0, 215, 255), # Gold
         'goalkeeper': (182, 89, 155) # Purple
     }
-    
+
+    def to_px(px_m, py_m):
+        x = int(px_m * scale) + ox
+        y = int(py_m * scale) + oy
+        x = max(0, min(x, pitch_img.shape[1] - 1))
+        y = max(0, min(y, pitch_img.shape[0] - 1))
+        return (x, y)
+
+    # Mejora H: dibujar trails
+    if trails:
+        for category, trail_list in trails.items():
+            color = colors.get(category, (255, 255, 255))
+            # Hacer el trail semi-transparente
+            fade_color = tuple(c // 3 for c in color)
+            for positions in trail_list:
+                if positions is None or len(positions) < 2:
+                    continue
+                pts = [to_px(p[0], p[1]) for p in positions]
+                for j in range(1, len(pts)):
+                    alpha = j / len(pts)
+                    line_color = tuple(int(fade_color[c] + alpha * (color[c] - fade_color[c])) for c in range(3))
+                    cv2.line(pitch_img, pts[j-1], pts[j], line_color, 2)
+
+    # Mejora I: dibujar líneas de offside
+    if offside_x:
+        for team_key, x_m in offside_x.items():
+            line_x = int(x_m * scale) + ox
+            line_x = max(0, min(line_x, pitch_img.shape[1] - 1))
+            line_color = (0, 0, 255) if team_key == 'team1' else (255, 100, 0)
+            cv2.line(pitch_img, (line_x, oy), (line_x, int(config.length * scale) + oy), line_color, 2)
+
     for category, points in transformed_points.items():
         if points is None or len(points) == 0:
             continue
-            
+
         color = colors.get(category, (255, 255, 255))
-        
+
         for point in points:
-            px, py = point
-            # Map to image coordinates
-            x = int(px * scale) + ox
-            y = int(py * scale) + oy
-            
-            # Clip to image bounds
-            x = max(0, min(x, pitch_img.shape[1] - 1))
-            y = max(0, min(y, pitch_img.shape[0] - 1))
-            
-            radius = 8 if category == 'ball' else 14  # Aumentado de 6/10 a 8/14
+            x, y = to_px(point[0], point[1])
+
+            radius = 8 if category == 'ball' else 14
             cv2.circle(pitch_img, (x, y), radius, color, -1)
-            cv2.circle(pitch_img, (x, y), radius+1, (0, 0, 0), 2) # Outline más grueso
-            
+            cv2.circle(pitch_img, (x, y), radius+1, (0, 0, 0), 2)
+
     return pitch_img
+
+
+def draw_voronoi_overlay(
+    img: np.ndarray,
+    config: SoccerPitchConfiguration,
+    team1_points: np.ndarray,
+    team2_points: np.ndarray,
+    scale: int = 5,
+    alpha: float = 0.25,
+) -> np.ndarray:
+    """
+    Mejora K: dibuja diagrama Voronoi coloreado por equipo sobre la imagen del pitch.
+    Cada píxel se asigna al jugador más cercano y se colorea según su equipo.
+    """
+    if (team1_points is None or len(team1_points) == 0) and \
+       (team2_points is None or len(team2_points) == 0):
+        return img
+
+    ox = int(config.margins * scale)
+    oy = int(config.margins * scale)
+    h, w = img.shape[:2]
+
+    # Combinar puntos con etiquetas
+    all_pts = []
+    labels = []
+    if team1_points is not None and len(team1_points) > 0:
+        for p in team1_points:
+            all_pts.append((int(p[0] * scale) + ox, int(p[1] * scale) + oy))
+            labels.append(1)
+    if team2_points is not None and len(team2_points) > 0:
+        for p in team2_points:
+            all_pts.append((int(p[0] * scale) + ox, int(p[1] * scale) + oy))
+            labels.append(2)
+
+    if len(all_pts) < 2:
+        return img
+
+    all_pts_arr = np.array(all_pts, dtype=np.float32)
+
+    # Crear mapa de distancias mínimas por equipo usando resolución reducida
+    step = 4  # Calcular cada 4 píxeles para velocidad
+    overlay = np.zeros_like(img)
+
+    field_x0, field_y0 = ox, oy
+    field_x1 = int(config.width * scale) + ox
+    field_y1 = int(config.length * scale) + oy
+
+    for py in range(field_y0, min(field_y1, h), step):
+        for px in range(field_x0, min(field_x1, w), step):
+            dists = np.sqrt((all_pts_arr[:, 0] - px) ** 2 + (all_pts_arr[:, 1] - py) ** 2)
+            nearest = int(np.argmin(dists))
+            if labels[nearest] == 1:
+                color = (0, 180, 0)  # Verde team1
+            else:
+                color = (180, 120, 0)  # Azul team2
+            overlay[py:py+step, px:px+step] = color
+
+    # Blend con alpha
+    mask = np.any(overlay > 0, axis=2)
+    img_float = img.astype(np.float32)
+    overlay_float = overlay.astype(np.float32)
+    img_float[mask] = img_float[mask] * (1 - alpha) + overlay_float[mask] * alpha
+    return img_float.astype(np.uint8)
 
 
 def draw_radar_with_metrics(
@@ -334,7 +424,9 @@ def draw_radar_with_metrics(
     transformed_points: Dict[str, np.ndarray],
     formations: Dict[str, str] = None,
     metrics: Dict[str, Dict] = None,
-    scale=5
+    scale=5,
+    trails: Optional[Dict[str, List[np.ndarray]]] = None,
+    offside_x: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
     """
     Dibuja el radar con jugadores, formaciones y métricas tácticas.
@@ -349,8 +441,14 @@ def draw_radar_with_metrics(
     Returns:
         Imagen del radar con anotaciones
     """
-    # Dibujar campo base con jugadores
-    pitch_img = draw_radar_view(config, transformed_points, scale)
+    # Dibujar campo base con jugadores, trails y offside
+    pitch_img = draw_radar_view(config, transformed_points, scale, trails=trails, offside_x=offside_x)
+
+    # Mejora K: Voronoi overlay
+    t1_pts = transformed_points.get('team1')
+    t2_pts = transformed_points.get('team2')
+    if t1_pts is not None and t2_pts is not None and len(t1_pts) > 0 and len(t2_pts) > 0:
+        pitch_img = draw_voronoi_overlay(pitch_img, config, t1_pts, t2_pts, scale, alpha=0.2)
 
     # Si no hay métricas, retornar solo el campo
     if formations is None and metrics is None:
