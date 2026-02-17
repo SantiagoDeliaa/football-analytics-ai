@@ -46,6 +46,11 @@ class BallPossessionTracker:
         self.per_player: Dict[int, int] = {}
         self.player_teams: Dict[int, str] = {}
 
+        # Mejora E: Detección de pases
+        self.passes: List[Dict] = []  # lista de pases detectados
+        self._prev_possessor: Optional[int] = None
+        self._prev_team: Optional[str] = None
+
     def assign_possession(
         self,
         tracked_persons,
@@ -54,7 +59,8 @@ class BallPossessionTracker:
         tracked_ball,
     ) -> Optional[Tuple[str, int]]:
         """
-        Determina qué jugador tiene la pelota en este frame.
+        Determina qué jugador tiene la pelota en este frame (píxeles).
+        Usa assign_possession_metric() cuando hay coordenadas de campo.
 
         Args:
             tracked_persons: sv.Detections con tracker_id
@@ -107,6 +113,7 @@ class BallPossessionTracker:
         tracker_id = int(tracked_persons.tracker_id[best_idx]) if tracked_persons.tracker_id is not None else -1
 
         self._no_assign_streak = 0
+        self._check_pass(team, tracker_id)
         self.current_team = team
         self.current_player_id = tracker_id
 
@@ -120,6 +127,80 @@ class BallPossessionTracker:
         self.timeline.append(team)
 
         return (team, tracker_id)
+
+    def assign_possession_metric(
+        self,
+        tracker_ids: List[int],
+        field_positions: np.ndarray,
+        team_labels: List[str],
+        ball_field_pos: Optional[np.ndarray],
+        max_distance_m: float = 3.5,
+    ) -> Optional[Tuple[str, int]]:
+        """
+        Fix C: Asigna posesión usando coordenadas de campo en metros.
+        Más preciso que la versión en píxeles porque compensa perspectiva.
+
+        Args:
+            tracker_ids: IDs de jugadores
+            field_positions: (N, 2) posiciones en metros
+            team_labels: lista de 'team1'/'team2' por jugador
+            ball_field_pos: (2,) posición de la pelota en metros, o None
+            max_distance_m: distancia máxima en metros para asignar posesión
+        """
+        self.total_frames += 1
+
+        if ball_field_pos is None or field_positions is None or len(field_positions) == 0:
+            return self._handle_no_assignment()
+
+        min_dist = float("inf")
+        best_idx = -1
+
+        for i in range(len(tracker_ids)):
+            if team_labels[i] not in ('team1', 'team2'):
+                continue
+            dist = float(np.linalg.norm(field_positions[i] - ball_field_pos))
+            if dist < min_dist:
+                min_dist = dist
+                best_idx = i
+
+        if best_idx == -1 or min_dist > max_distance_m:
+            return self._handle_no_assignment()
+
+        team = team_labels[best_idx]
+        tracker_id = int(tracker_ids[best_idx])
+
+        self._no_assign_streak = 0
+        self._check_pass(team, tracker_id)
+        self.current_team = team
+        self.current_player_id = tracker_id
+
+        if team == "team1":
+            self.team1_frames += 1
+        else:
+            self.team2_frames += 1
+
+        self.per_player[tracker_id] = self.per_player.get(tracker_id, 0) + 1
+        self.player_teams[tracker_id] = team
+        self.timeline.append(team)
+
+        return (team, tracker_id)
+
+    def _check_pass(self, team: str, tracker_id: int):
+        """Mejora E: detectar pase cuando la posesión cambia de jugador."""
+        if (self._prev_possessor is not None
+                and self._prev_possessor != tracker_id
+                and self._prev_team is not None):
+            pass_type = "pass" if self._prev_team == team else "turnover"
+            self.passes.append({
+                "frame": self.total_frames,
+                "from_player": self._prev_possessor,
+                "to_player": tracker_id,
+                "from_team": self._prev_team,
+                "to_team": team,
+                "type": pass_type,
+            })
+        self._prev_possessor = tracker_id
+        self._prev_team = team
 
     def _handle_no_assignment(self) -> Optional[Tuple[str, int]]:
         """Mantiene inercia de la última posesión por unos frames."""
@@ -215,6 +296,11 @@ class BallPossessionTracker:
             }
             for tid, frames in sorted_players
         ]
+        # Mejora E: estadísticas de pases
+        team1_passes = [p for p in self.passes if p['from_team'] == 'team1' and p['type'] == 'pass']
+        team2_passes = [p for p in self.passes if p['from_team'] == 'team2' and p['type'] == 'pass']
+        turnovers = [p for p in self.passes if p['type'] == 'turnover']
+
         return {
             "team1_possession_pct": round(pct["team1"], 2),
             "team2_possession_pct": round(pct["team2"], 2),
@@ -222,4 +308,11 @@ class BallPossessionTracker:
             "contested_frames": self.contested_frames,
             "total_frames_analyzed": self.total_frames,
             "top_possessors": top_possessors,
+            "passes": {
+                "team1_passes": len(team1_passes),
+                "team2_passes": len(team2_passes),
+                "turnovers": len(turnovers),
+                "total": len(self.passes),
+            },
+            "timeline": self.timeline,
         }

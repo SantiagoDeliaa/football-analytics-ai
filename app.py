@@ -693,6 +693,51 @@ if uploaded_video:
             fig_pie.update_layout(title="Distribución de Posesión")
             st.plotly_chart(fig_pie, use_container_width=True)
 
+            # Mejora L: Timeline de posesión
+            timeline_data = possession.get('timeline', [])
+            if timeline_data and len(timeline_data) > 10:
+                st.subheader("Timeline de Posesión")
+                # Agrupar en segmentos para visualización
+                fps_val = stats.get('total_frames', len(timeline_data)) / max(0.1, stats.get('duration_seconds', 1))
+                chunk_size = max(1, int(fps_val))  # 1 segundo por barra
+                chunks_t1 = []
+                chunks_t2 = []
+                chunks_x = []
+                for ci in range(0, len(timeline_data), chunk_size):
+                    chunk = timeline_data[ci:ci+chunk_size]
+                    t1_count = sum(1 for v in chunk if v == 'team1')
+                    t2_count = sum(1 for v in chunk if v == 'team2')
+                    total = max(1, t1_count + t2_count)
+                    chunks_t1.append(t1_count / total * 100)
+                    chunks_t2.append(t2_count / total * 100)
+                    chunks_x.append(ci / max(1, fps_val))
+
+                fig_timeline = go.Figure()
+                fig_timeline.add_trace(go.Bar(x=chunks_x, y=chunks_t1, name='Team 1', marker_color='#00FF00'))
+                fig_timeline.add_trace(go.Bar(x=chunks_x, y=chunks_t2, name='Team 2', marker_color='#00BFFF'))
+                fig_timeline.update_layout(
+                    barmode='stack',
+                    title='Posesión por segundo',
+                    xaxis_title='Tiempo (s)',
+                    yaxis_title='%',
+                    yaxis=dict(range=[0, 100]),
+                    height=250,
+                    margin=dict(t=40, b=30),
+                )
+                st.plotly_chart(fig_timeline, use_container_width=True)
+
+            # Mejora E: Estadísticas de pases
+            passes_data = possession.get('passes', {})
+            if passes_data and passes_data.get('total', 0) > 0:
+                st.subheader("Pases y Pérdidas")
+                col_pa1, col_pa2, col_pa3 = st.columns(3)
+                with col_pa1:
+                    st.metric("Pases Team 1", passes_data.get('team1_passes', 0))
+                with col_pa2:
+                    st.metric("Pases Team 2", passes_data.get('team2_passes', 0))
+                with col_pa3:
+                    st.metric("Pérdidas de Balón", passes_data.get('turnovers', 0))
+
             # Top poseedores
             if possession.get('top_possessors'):
                 st.subheader("Jugadores con Más Posesión")
@@ -714,24 +759,36 @@ if uploaded_video:
                     st.metric("Distancia Total", f"{t1.get('total_distance_m', 0):.0f} m")
                     st.metric("Dist. Prom. por Jugador", f"{t1.get('avg_distance_m', 0):.0f} m")
                     st.metric("Velocidad Máxima", f"{t1.get('max_speed_kmh', 0):.1f} km/h")
+                    st.metric("Sprints Totales", t1.get('total_sprints', 0))
                 with col_s2:
                     st.markdown("### Team 2")
                     t2 = per_team.get('team2', {})
                     st.metric("Distancia Total", f"{t2.get('total_distance_m', 0):.0f} m")
                     st.metric("Dist. Prom. por Jugador", f"{t2.get('avg_distance_m', 0):.0f} m")
                     st.metric("Velocidad Máxima", f"{t2.get('max_speed_kmh', 0):.1f} km/h")
+                    st.metric("Sprints Totales", t2.get('total_sprints', 0))
 
-                # Tabla por jugador
+                # Tabla por jugador con sprints y zonas de intensidad
                 if 'per_player' in speed_dist:
                     with st.expander("Ver detalle por jugador"):
                         rows = []
                         for tid, data in speed_dist['per_player'].items():
-                            rows.append({
+                            row = {
                                 'ID': tid,
                                 'Equipo': data['team'],
                                 'Distancia (m)': round(data['distance_m'], 1),
                                 'Vel. Máx (km/h)': round(data.get('max_speed_kmh', 0), 1),
-                            })
+                                'Sprints': data.get('sprint_count', 0),
+                                'Dist. Sprint (m)': round(data.get('sprint_distance_m', 0), 1),
+                            }
+                            zones = data.get('intensity_zones_m', {})
+                            if zones:
+                                row['Walking (m)'] = zones.get('walking', 0)
+                                row['Jogging (m)'] = zones.get('jogging', 0)
+                                row['Running (m)'] = zones.get('running', 0)
+                                row['High Int. (m)'] = zones.get('high_intensity', 0)
+                                row['Sprint (m)'] = zones.get('sprint', 0)
+                            rows.append(row)
                         if rows:
                             df_speed = pd.DataFrame(rows).sort_values('Distancia (m)', ascending=False)
                             st.dataframe(df_speed, use_container_width=True, hide_index=True)

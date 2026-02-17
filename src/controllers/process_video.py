@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from src.utils.view_transformer import ViewTransformer
 from src.utils.homography_manager import HomographyManager
-from src.utils.radar import SoccerPitchConfiguration, draw_radar_view
+from src.utils.radar import SoccerPitchConfiguration, draw_radar_view, draw_radar_with_metrics
 from src.controllers.formation_detector import FormationDetector
 from src.controllers.tactical_metrics import TacticalMetricsCalculator, TacticalMetricsTracker
 from ultralytics import YOLO
@@ -598,19 +598,21 @@ def process_video(
         pitch_config = SoccerPitchConfiguration(model_type=pitch_model_type)
         homography_manager = HomographyManager()
 
-    # Anotadores
-    team1_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
+    # Mejora J: Anotadores estilo broadcast (elipse + trace)
+    team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
+    team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=1, trace_length=30)
     team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
-    
-    team2_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00BFFF"), thickness=2)
+
+    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00BFFF"), thickness=2)
+    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00BFFF"), thickness=1, trace_length=30)
     team2_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.WHITE, text_padding=3)
-    
-    goalkeeper_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#9B59B6"), thickness=2)
+
+    goalkeeper_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#9B59B6"), thickness=2)
     goalkeeper_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.WHITE, text_padding=3)
-    
-    referee_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#FFD700"), thickness=2)
+
+    referee_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#FFD700"), thickness=2)
     referee_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
-    
+
     ball_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#FF0000"), thickness=3)
     ball_label_annotator = sv.LabelAnnotator(text_scale=0.6, text_thickness=2, text_color=sv.Color.WHITE, text_padding=4)
 
@@ -627,6 +629,10 @@ def process_video(
     # Suavizado temporal para posiciones en radar
     radar_positions_history = {}  # tracker_id -> deque de posiciones (x, y)
     RADAR_SMOOTH_WINDOW = 5       # Ventana de suavizado (5 frames)
+
+    # Mejora H: historial de posiciones para trails en radar
+    TRAIL_LENGTH = 15
+    ball_trail = deque(maxlen=TRAIL_LENGTH)  # deque de (x, y)
     debug_homography_overlay: bool = True
     heatmap_bins_team1 = np.zeros((53, 34), dtype=np.float32)
     heatmap_bins_team2 = np.zeros((53, 34), dtype=np.float32)
@@ -658,8 +664,18 @@ def process_video(
     player_model_names = player_model.names
     player_class_ids = []
     # Fallback ball class IDs from player model (if ball model is missing)
-    player_model_ball_class_ids = [] 
-    
+    player_model_ball_class_ids = []
+
+    # Detectar si es modelo fine-tuneado con clases específicas de fútbol
+    # (player, goalkeeper, referee, ball) vs COCO genérico (person, sports ball)
+    _names_lower = {k: str(v).lower() for k, v in player_model_names.items()}
+    _all_names = set(_names_lower.values())
+    is_football_model = ('player' in _all_names or 'referee' in _all_names)
+
+    # IDs específicos para modelo fine-tuneado
+    referee_class_ids = []
+    goalkeeper_class_ids = []
+
     for id, name in player_model_names.items():
         name_lower = str(name).lower()
         # Clases para personas (jugadores, árbitros, porteros, personas genéricas)
@@ -668,16 +684,47 @@ def process_video(
         # Clases para pelota en el modelo de jugadores
         if any(x in name_lower for x in ['ball', 'sports ball']):
             player_model_ball_class_ids.append(id)
-    
+        # Mapear clases específicas del modelo fine-tuneado
+        if is_football_model:
+            if name_lower == 'referee':
+                referee_class_ids.append(id)
+            if name_lower == 'goalkeeper':
+                goalkeeper_class_ids.append(id)
+
+    if is_football_model:
+        print(f"✅ Modelo fine-tuneado de fútbol detectado: {dict(player_model_names)}")
+
     # Fallbacks por defecto si no se detectan nombres conocidos
     if not player_class_ids:
         # Asumir clase 0 si es un modelo custom desconocido o COCO standard
         player_class_ids = [0]
-    
+
     if not player_model_ball_class_ids:
         # Solo si parece ser COCO (muchas clases), usamos 32
-        if len(player_model_names) > 30: 
+        if len(player_model_names) > 30:
             player_model_ball_class_ids = [32]
+
+    # --- ESTADO PARA INTERPOLACIÓN DE PELOTA (Mejora A + F: Kalman) ---
+    last_known_ball_bbox = None      # Última bbox válida de pelota
+    ball_missing_frames = 0          # Frames consecutivos sin pelota
+    BALL_INTERP_MAX_FRAMES = 10      # Máximo de frames a interpolar
+
+    # Mejora F: Kalman filter para pelota (estado = [cx, cy, vx, vy])
+    ball_kalman = cv2.KalmanFilter(4, 2)
+    ball_kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+    ball_kalman.transitionMatrix = np.array([
+        [1, 0, 1, 0],
+        [0, 1, 0, 1],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+    ], np.float32)
+    ball_kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 1e-2
+    ball_kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1e-1
+    ball_kalman_initialized = False
+
+    # --- CACHÉ DE EQUIPO POR TRACKER_ID (Mejora C) ---
+    team_cache = {}                  # tracker_id → {'team': str, 'confidence': int}
+    TEAM_CACHE_LOCK_THRESHOLD = 15   # Después de N votos consistentes, bloquear asignación
             
     # --- IDENTIFICAR CLASES DEL MODELO DE PELOTA (si existe) ---
     ball_model_class_ids = []
@@ -821,7 +868,18 @@ def process_video(
             team2_mask = []
             referee_mask = []
             goalkeeper_mask = []
-            
+
+            # --- MEJORA B: Mapear clases nativas del modelo fine-tuneado ---
+            # Si el modelo tiene clases referee/goalkeeper/ball nativas,
+            # construimos un dict tracker_id → class_name desde las detecciones originales
+            native_class_map = {}  # índice en tracked_persons → clase nativa
+            if is_football_model and tracked_persons.class_id is not None:
+                for i in range(len(tracked_persons)):
+                    cls_id = tracked_persons.class_id[i]
+                    cls_name = _names_lower.get(int(cls_id), '')
+                    if cls_name in ('referee', 'goalkeeper'):
+                        native_class_map[i] = cls_name
+
             if len(tracked_persons) > 0 and team1_colors is not None:
                 for i, (xyxy, _, _, _, tracker_id, _) in enumerate(tracked_persons):
                     if not is_in_playing_field(xyxy, width, height):
@@ -831,28 +889,49 @@ def process_video(
                         referee_mask.append(False)
                         continue
 
-                    in_goal = is_in_goal_area(xyxy, width, height)
-                    x_center = (xyxy[0] + xyxy[2]) / 2
-                    
-                    if in_goal and (x_center < width * 0.05 or x_center > width * 0.95):
-                        current_vote = 'goalkeeper'
+                    # --- MEJORA B: Usar clase nativa si disponible ---
+                    if i in native_class_map:
+                        current_vote = native_class_map[i]
                     else:
-                        person_type, _ = classify_person_smart(
-                            frame, xyxy, team1_colors, team2_colors, width, height
-                        )
-                        current_vote = person_type
+                        in_goal = is_in_goal_area(xyxy, width, height)
+                        x_center = (xyxy[0] + xyxy[2]) / 2
+
+                        if in_goal and (x_center < width * 0.05 or x_center > width * 0.95):
+                            current_vote = 'goalkeeper'
+                        else:
+                            person_type, _ = classify_person_smart(
+                                frame, xyxy, team1_colors, team2_colors, width, height
+                            )
+                            current_vote = person_type
 
                     if tracker_id not in track_history:
                         track_history[tracker_id] = deque(maxlen=HISTORY_LEN)
-                    
+
                     track_history[tracker_id].append(current_vote)
                     vote_counts = Counter(track_history[tracker_id])
                     most_common = vote_counts.most_common(1)[0][0]
-                    
+
                     if current_vote == 'goalkeeper':
                         final_class = 'goalkeeper'
                     else:
-                        final_class = most_common
+                        # --- MEJORA C: Caché de equipo por tracker_id ---
+                        # Si el tracker ya tiene suficientes votos consistentes, bloquear
+                        if tracker_id in team_cache:
+                            cached = team_cache[tracker_id]
+                            if cached['confidence'] >= TEAM_CACHE_LOCK_THRESHOLD:
+                                final_class = cached['team']
+                            else:
+                                final_class = most_common
+                                if final_class == cached['team']:
+                                    cached['confidence'] += 1
+                                else:
+                                    cached['confidence'] = max(0, cached['confidence'] - 1)
+                                    if cached['confidence'] == 0:
+                                        cached['team'] = final_class
+                                        cached['confidence'] = 1
+                        else:
+                            final_class = most_common
+                            team_cache[tracker_id] = {'team': final_class, 'confidence': 1}
 
                     if final_class == 'goalkeeper':
                         goalkeeper_mask.append(True)
@@ -884,6 +963,7 @@ def process_video(
             if any(team1_mask):
                 t1_dets = tracked_persons[np.array(team1_mask)]
                 annotated_frame = team1_annotator.annotate(scene=annotated_frame, detections=t1_dets)
+                annotated_frame = team1_trace_annotator.annotate(scene=annotated_frame, detections=t1_dets)
                 if t1_dets.tracker_id is not None:
                     labels = [f"Team 1 #{tid}" for tid in t1_dets.tracker_id]
                     annotated_frame = team1_label_annotator.annotate(scene=annotated_frame, detections=t1_dets, labels=labels)
@@ -891,6 +971,7 @@ def process_video(
             if any(team2_mask):
                 t2_dets = tracked_persons[np.array(team2_mask)]
                 annotated_frame = team2_annotator.annotate(scene=annotated_frame, detections=t2_dets)
+                annotated_frame = team2_trace_annotator.annotate(scene=annotated_frame, detections=t2_dets)
                 if t2_dets.tracker_id is not None:
                     labels = [f"Team 2 #{tid}" for tid in t2_dets.tracker_id]
                     annotated_frame = team2_label_annotator.annotate(scene=annotated_frame, detections=t2_dets, labels=labels)
@@ -909,16 +990,59 @@ def process_video(
                     labels = [f"Referee #{tid}" for tid in ref_dets.tracker_id]
                     annotated_frame = referee_label_annotator.annotate(scene=annotated_frame, detections=ref_dets, labels=labels)
 
-            # --- TRACKING DE PELOTA ---
+            # --- TRACKING DE PELOTA + KALMAN (Mejora A + F) ---
             tracked_ball = None
             if len(ball_detections) > 0:
                 tracked_ball = ball_tracker.update_with_detections(ball_detections)
-                annotated_frame = ball_annotator.annotate(scene=annotated_frame, detections=tracked_ball)
-                ball_labels = ["BALL"] * len(tracked_ball)
-                annotated_frame = ball_label_annotator.annotate(scene=annotated_frame, detections=tracked_ball, labels=ball_labels)
+                if len(tracked_ball) > 0:
+                    annotated_frame = ball_annotator.annotate(scene=annotated_frame, detections=tracked_ball)
+                    ball_labels = ["BALL"] * len(tracked_ball)
+                    annotated_frame = ball_label_annotator.annotate(scene=annotated_frame, detections=tracked_ball, labels=ball_labels)
+                    last_known_ball_bbox = tracked_ball.xyxy[0].copy()
+                    ball_missing_frames = 0
+                    # Mejora F: actualizar Kalman con medición real
+                    bb = tracked_ball.xyxy[0]
+                    cx = (bb[0] + bb[2]) / 2
+                    cy = (bb[1] + bb[3]) / 2
+                    measurement = np.array([[np.float32(cx)], [np.float32(cy)]])
+                    if not ball_kalman_initialized:
+                        ball_kalman.statePre = np.array([[cx], [cy], [0], [0]], np.float32)
+                        ball_kalman.statePost = np.array([[cx], [cy], [0], [0]], np.float32)
+                        ball_kalman_initialized = True
+                    ball_kalman.correct(measurement)
+                    ball_kalman.predict()
+                else:
+                    tracked_ball = None
+                    ball_missing_frames += 1
+            elif ball_kalman_initialized and ball_missing_frames < BALL_INTERP_MAX_FRAMES:
+                # Mejora F: Kalman predict en vez de frozen-position
+                ball_missing_frames += 1
+                prediction = ball_kalman.predict()
+                pred_cx = float(prediction[0])
+                pred_cy = float(prediction[1])
+                # Reconstruir bbox del mismo tamaño que la última conocida
+                if last_known_ball_bbox is not None:
+                    half_w = (last_known_ball_bbox[2] - last_known_ball_bbox[0]) / 2
+                    half_h = (last_known_ball_bbox[3] - last_known_ball_bbox[1]) / 2
+                else:
+                    half_w, half_h = 10.0, 10.0
+                synthetic_xyxy = np.array([[
+                    pred_cx - half_w, pred_cy - half_h,
+                    pred_cx + half_w, pred_cy + half_h
+                ]], dtype=np.float32)
+                synthetic_conf = np.array([max(0.1, 0.5 - ball_missing_frames * 0.04)])
+                ball_detections = sv.Detections(
+                    xyxy=synthetic_xyxy,
+                    confidence=synthetic_conf,
+                )
+                tracked_ball = ball_tracker.update_with_detections(ball_detections)
+            else:
+                ball_missing_frames += 1
 
-            # --- ANÁLISIS DE POSESIÓN ---
-            if possession_tracker is not None:
+            # --- ANÁLISIS DE POSESIÓN (fallback píxeles, se mejora abajo con métrico) ---
+            _possession_assigned_metric = False
+            if possession_tracker is not None and not pitch_config:
+                # Sin homografía: usar método original en píxeles
                 possession_tracker.assign_possession(
                     tracked_persons, team1_mask, team2_mask, tracked_ball
                 )
@@ -1068,16 +1192,57 @@ def process_video(
                                                     speed_data[tid]['speed_kmh'],
                                                 )
 
+                        # --- Fix C: POSESIÓN EN ESPACIO MÉTRICO ---
+                        if possession_tracker is not None:
+                            ball_field = None
+                            if 'ball' in points_to_transform and len(points_to_transform['ball']) > 0:
+                                ball_field = points_to_transform['ball'][0]
+                            # Combinar tracker_ids y team_labels de team1+team2
+                            all_tids = []
+                            all_field_pos = []
+                            all_team_labels = []
+                            for tk in ('team1', 'team2'):
+                                mask_arr = np.array(team1_mask if tk == 'team1' else team2_mask)
+                                if tk in points_to_transform and any(mask_arr):
+                                    team_dets = tracked_persons[mask_arr]
+                                    if team_dets.tracker_id is not None:
+                                        all_tids.extend(team_dets.tracker_id.tolist())
+                                        all_field_pos.extend(points_to_transform[tk].tolist())
+                                        all_team_labels.extend([tk] * len(team_dets))
+                            if all_tids and ball_field is not None:
+                                possession_tracker.assign_possession_metric(
+                                    all_tids,
+                                    np.array(all_field_pos),
+                                    all_team_labels,
+                                    ball_field,
+                                )
+                                _possession_assigned_metric = True
+                            annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
+
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
+                        # Fix D: auto-detectar dirección de ataque por centroide
+                        t1_dir = "right"
+                        t2_dir = "right"
+                        if 'team1' in points_to_transform and 'team2' in points_to_transform:
+                            if len(points_to_transform['team1']) > 0 and len(points_to_transform['team2']) > 0:
+                                cx1 = float(np.mean(points_to_transform['team1'][:, 0]))
+                                cx2 = float(np.mean(points_to_transform['team2'][:, 0]))
+                                if cx1 < cx2:
+                                    t1_dir = "right"
+                                    t2_dir = "left"
+                                else:
+                                    t1_dir = "left"
+                                    t2_dir = "right"
+
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
-                            formation1 = formation_detector.detect_formation(points_to_transform['team1'])
+                            formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir)
                             formations_timeline['team1'].append(formation1)
-                            
+
                             metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
                             team1_tracker.update(metrics1, frame_count)
-                            
+
                         if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
-                            formation2 = formation_detector.detect_formation(points_to_transform['team2'])
+                            formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir)
                             formations_timeline['team2'].append(formation2)
                             
                             metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
@@ -1111,7 +1276,56 @@ def process_video(
                             if debug_scouting and frame_count % 100 == 0:
                                 print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
-                        radar_view = draw_radar_view(pitch_config, points_to_transform, scale=8)
+                        # Fix A: usar radar con métricas tácticas
+                        current_formations = {}
+                        current_metrics = {}
+                        if formations_timeline['team1']:
+                            current_formations['team1'] = formations_timeline['team1'][-1].get('formation', 'N/A')
+                        if formations_timeline['team2']:
+                            current_formations['team2'] = formations_timeline['team2'][-1].get('formation', 'N/A')
+                        if team1_tracker.metrics_history['pressure_height']:
+                            current_metrics['team1'] = {
+                                'pressure_height': team1_tracker.metrics_history['pressure_height'][-1],
+                                'offensive_width': team1_tracker.metrics_history['offensive_width'][-1],
+                                'compactness': team1_tracker.metrics_history['compactness'][-1],
+                            }
+                        if team2_tracker.metrics_history['pressure_height']:
+                            current_metrics['team2'] = {
+                                'pressure_height': team2_tracker.metrics_history['pressure_height'][-1],
+                                'offensive_width': team2_tracker.metrics_history['offensive_width'][-1],
+                                'compactness': team2_tracker.metrics_history['compactness'][-1],
+                            }
+
+                        # Mejora H: acumular trail de pelota
+                        radar_trails = {}
+                        if 'ball' in points_to_transform and len(points_to_transform['ball']) > 0:
+                            ball_trail.append(points_to_transform['ball'][0].copy())
+                            if len(ball_trail) >= 2:
+                                radar_trails['ball'] = [np.array(list(ball_trail))]
+
+                        # Mejora I: calcular línea de offside (penúltimo defensor)
+                        radar_offside = {}
+                        if 'team1' in points_to_transform and len(points_to_transform['team1']) >= 2:
+                            t1_x = np.sort(points_to_transform['team1'][:, 0])
+                            if t1_dir == "right":
+                                radar_offside['team1'] = float(t1_x[1])  # 2do más bajo X
+                            else:
+                                radar_offside['team1'] = float(t1_x[-2])  # 2do más alto X
+                        if 'team2' in points_to_transform and len(points_to_transform['team2']) >= 2:
+                            t2_x = np.sort(points_to_transform['team2'][:, 0])
+                            if t2_dir == "right":
+                                radar_offside['team2'] = float(t2_x[1])
+                            else:
+                                radar_offside['team2'] = float(t2_x[-2])
+
+                        radar_view = draw_radar_with_metrics(
+                            pitch_config, points_to_transform,
+                            formations=current_formations if current_formations else None,
+                            metrics=current_metrics if current_metrics else None,
+                            scale=8,
+                            trails=radar_trails if radar_trails else None,
+                            offside_x=radar_offside if radar_offside else None,
+                        )
 
                         # Mantener horizontal (sin rotación)
                         # Tamaño: 22% del ancho (reducido para no molestar)
@@ -1137,6 +1351,13 @@ def process_video(
                             annotated_frame[offset_y:offset_y+new_h, offset_x:offset_x+new_w] = blended
                     except Exception as e:
                         print(f"Error dibujando radar: {e}")
+
+            # Fallback: posesión píxeles si no se pudo hacer métrico
+            if possession_tracker is not None and pitch_config and not _possession_assigned_metric:
+                possession_tracker.assign_possession(
+                    tracked_persons, team1_mask, team2_mask, tracked_ball
+                )
+                annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
             if debug_homography_overlay:
                 state = getattr(homography_manager, 'last_state', "")
