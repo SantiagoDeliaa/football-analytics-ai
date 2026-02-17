@@ -533,7 +533,8 @@ def process_video(
     detection_mode: str = "players_and_ball",
     img_size: int = 640,
     full_field_approx: bool = False,
-    progress_callback=None
+    progress_callback=None,
+    enable_possession: bool = False
 ):
     """
     Procesa video completo con detección y tracking mejorado usando múltiples modelos.
@@ -640,6 +641,18 @@ def process_video(
     team1_tracker = TacticalMetricsTracker(history_size=5000)
     team2_tracker = TacticalMetricsTracker(history_size=5000)
     formations_timeline = {'team1': [], 'team2': []}
+
+    # --- INICIALIZAR MÓDULOS DE POSESIÓN (si está habilitado) ---
+    possession_tracker = None
+    speed_estimator = None
+    if enable_possession:
+        from src.controllers.ball_possession_tracker import BallPossessionTracker
+        from src.controllers.speed_distance_estimator import SpeedDistanceEstimator
+        possession_tracker = BallPossessionTracker(
+            max_player_ball_distance_px=70.0,
+            possession_inertia=5,
+        )
+        speed_estimator = SpeedDistanceEstimator(fps=fps, window_frames=5)
 
     # --- IDENTIFICAR CLASES DEL MODELO DE JUGADORES ---
     player_model_names = player_model.names
@@ -904,6 +917,13 @@ def process_video(
                 ball_labels = ["BALL"] * len(tracked_ball)
                 annotated_frame = ball_label_annotator.annotate(scene=annotated_frame, detections=tracked_ball, labels=ball_labels)
 
+            # --- ANÁLISIS DE POSESIÓN ---
+            if possession_tracker is not None:
+                possession_tracker.assign_possession(
+                    tracked_persons, team1_mask, team2_mask, tracked_ball
+                )
+                annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
+
             # --- RADAR ---
             if pitch_config:  # Si hay configuración de pitch (ya sea por modelo o approx)
                 transformer = None
@@ -1029,6 +1049,25 @@ def process_video(
                             else:
                                 points_to_transform['ball'] = raw_ball_pos
                         
+                        # --- VELOCIDAD Y DISTANCIA (posesión) ---
+                        if speed_estimator is not None:
+                            for team_key in ('team1', 'team2'):
+                                mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
+                                if team_key in points_to_transform and any(mask_arr):
+                                    team_dets = tracked_persons[mask_arr]
+                                    if team_dets.tracker_id is not None:
+                                        speed_data = speed_estimator.update(
+                                            team_dets.tracker_id.tolist(),
+                                            points_to_transform[team_key],
+                                            [team_key] * len(team_dets),
+                                        )
+                                        for j, tid in enumerate(team_dets.tracker_id):
+                                            if tid in speed_data and speed_data[tid]['speed_kmh'] > 2.0:
+                                                annotated_frame = speed_estimator.draw_player_speed(
+                                                    annotated_frame, tid, team_dets.xyxy[j],
+                                                    speed_data[tid]['speed_kmh'],
+                                                )
+
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
                             formation1 = formation_detector.detect_formation(points_to_transform['team1'])
@@ -1203,6 +1242,12 @@ def process_video(
                 'sample_rate': heatmap_sample_every
             }
         }
+
+        # --- ESTADÍSTICAS DE POSESIÓN ---
+        if possession_tracker is not None:
+            stats_data['possession'] = possession_tracker.get_stats_dict()
+        if speed_estimator is not None:
+            stats_data['speed_distance'] = speed_estimator.get_summary_stats()
 
         stats_path = Path(target_path).parent / f"{Path(target_path).stem}_stats.json"
         with open(stats_path, 'w') as f:
