@@ -1046,7 +1046,9 @@ def process_video(
                         
                         _heatmap_valid_frame_counter += 1
                         if _heatmap_valid_frame_counter % heatmap_sample_every == 0:
-                            if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
+                            sampled = False
+                            if 'team1' in points_to_transform and len(points_to_transform['team1']) >= 6:
+                                sampled = True
                                 for x, y in points_to_transform['team1']:
                                     x = float(np.clip(x, 0, 105))
                                     y = float(np.clip(y, 0, 68))
@@ -1055,7 +1057,8 @@ def process_video(
                                     xi = max(0, min(xi, 52))
                                     yi = max(0, min(yi, 33))
                                     heatmap_bins_team1[xi, yi] += 1.0
-                            if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
+                            if 'team2' in points_to_transform and len(points_to_transform['team2']) >= 6:
+                                sampled = True
                                 for x, y in points_to_transform['team2']:
                                     x = float(np.clip(x, 0, 105))
                                     y = float(np.clip(y, 0, 68))
@@ -1064,7 +1067,8 @@ def process_video(
                                     xi = max(0, min(xi, 52))
                                     yi = max(0, min(yi, 33))
                                     heatmap_bins_team2[xi, yi] += 1.0
-                            heatmap_samples_count += 1
+                            if sampled:
+                                heatmap_samples_count += 1
                             if debug_scouting and frame_count % 100 == 0:
                                 print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
