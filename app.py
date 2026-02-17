@@ -13,6 +13,8 @@ import json
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np
+import cv2
 
 st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_sidebar_state="expanded")
 
@@ -125,7 +127,7 @@ if uploaded_video:
         f.write(uploaded_video.read())
 
     # Tabs for organization
-    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar"])
+    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar", "🕵️ Scouting"])
 
     with tabs[0]:
         col_input, col_output = st.columns(2)
@@ -390,6 +392,69 @@ if uploaded_video:
         else:
             st.info("💾 Las opciones de exportación aparecerán aquí después de procesar el video")
 
+    with tabs[4]:
+        if st.session_state.stats and 'scouting_heatmaps' in st.session_state.stats:
+            stats = st.session_state.stats
+            st.subheader("🕵️ Scouting")
+            col_t1, col_t2 = st.columns(2)
+            if 'timeline' in stats:
+                timeline = stats['timeline']
+                with col_t1:
+                    st.markdown("### 🟢 Team 1")
+                    frames = timeline.get('team1', {}).get('frame_number', [])
+                    depth = timeline.get('team1', {}).get('block_depth_m', [])
+                    width = timeline.get('team1', {}).get('block_width_m', [])
+                    left = timeline.get('team1', {}).get('def_line_left_m', [])
+                    right = timeline.get('team1', {}).get('def_line_right_m', [])
+                    if len(frames) > 0:
+                        fig_c = go.Figure()
+                        fig_c.add_trace(go.Scatter(x=frames, y=depth, name='Profundidad (m)', line=dict(color='green')))
+                        fig_c.add_trace(go.Scatter(x=frames, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
+                        fig_c.update_layout(title='Compactación', xaxis_title='Frame', yaxis_title='Metros', hovermode='x unified')
+                        st.plotly_chart(fig_c, use_container_width=True)
+                        fig_d = go.Figure()
+                        fig_d.add_trace(go.Scatter(x=frames, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
+                        fig_d.add_trace(go.Scatter(x=frames, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
+                        fig_d.update_layout(title='Línea Defensiva', xaxis_title='Frame', yaxis_title='Metros', hovermode='x unified')
+                        st.plotly_chart(fig_d, use_container_width=True)
+                with col_t2:
+                    st.markdown("### 🔵 Team 2")
+                    frames = timeline.get('team2', {}).get('frame_number', [])
+                    depth = timeline.get('team2', {}).get('block_depth_m', [])
+                    width = timeline.get('team2', {}).get('block_width_m', [])
+                    left = timeline.get('team2', {}).get('def_line_left_m', [])
+                    right = timeline.get('team2', {}).get('def_line_right_m', [])
+                    if len(frames) > 0:
+                        fig_c = go.Figure()
+                        fig_c.add_trace(go.Scatter(x=frames, y=depth, name='Profundidad (m)', line=dict(color='green')))
+                        fig_c.add_trace(go.Scatter(x=frames, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
+                        fig_c.update_layout(title='Compactación', xaxis_title='Frame', yaxis_title='Metros', hovermode='x unified')
+                        st.plotly_chart(fig_c, use_container_width=True)
+                        fig_d = go.Figure()
+                        fig_d.add_trace(go.Scatter(x=frames, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
+                        fig_d.add_trace(go.Scatter(x=frames, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
+                        fig_d.update_layout(title='Línea Defensiva', xaxis_title='Frame', yaxis_title='Metros', hovermode='x unified')
+                        st.plotly_chart(fig_d, use_container_width=True)
+            st.subheader("Heatmaps")
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                h1 = stats.get('scouting_heatmaps', {}).get('team1', None)
+                if h1 is not None:
+                    heatmap = np.array(h1, dtype=np.float32)
+                    heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
+                    heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
+                    heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
+                    st.image(heatmap_color, caption="Heatmap Team 1", use_container_width=True)
+            with col_h2:
+                h2 = stats.get('scouting_heatmaps', {}).get('team2', None)
+                if h2 is not None:
+                    heatmap = np.array(h2, dtype=np.float32)
+                    heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
+                    heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
+                    heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
+                    st.image(heatmap_color, caption="Heatmap Team 2", use_container_width=True)
+        else:
+            st.warning("Scouting metrics not available for this video.")
 else:
     st.info("👈 Sube un video para comenzar el análisis táctico")
 

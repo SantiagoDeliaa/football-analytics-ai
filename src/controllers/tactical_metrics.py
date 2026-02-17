@@ -21,7 +21,7 @@ class TacticalMetricsCalculator:
     Calcula métricas tácticas para equipos de fútbol basándose en posiciones.
     """
 
-    def __init__(self, field_width: float = 105.0, field_length: float = 68.0):
+    def __init__(self, field_width: float = 105.0, field_length: float = 68.0, min_players_for_metrics: int = 6):
         """
         Args:
             field_width: Ancho del campo en metros (105m FIFA standard)
@@ -29,8 +29,9 @@ class TacticalMetricsCalculator:
         """
         self.field_width = field_width
         self.field_length = field_length
+        self.min_players_for_metrics = max(1, int(min_players_for_metrics))
 
-    def calculate_all_metrics(self, positions: np.ndarray) -> Dict:
+    def calculate_all_metrics(self, positions: np.ndarray) -> Optional[Dict]:
         """
         Calcula todas las métricas para un conjunto de posiciones.
 
@@ -40,10 +41,8 @@ class TacticalMetricsCalculator:
         Returns:
             Dict con todas las métricas calculadas
         """
-        if len(positions) < 3:
-            empty = self._empty_metrics()
-            empty['num_players'] = len(positions)
-            return empty
+        if len(positions) < self.min_players_for_metrics:
+            return None
 
         block = self.calculate_block_compactness(positions)
         def_line = self.calculate_defensive_line_height_dual(positions)
@@ -252,7 +251,7 @@ class TacticalMetricsTracker:
         }
         self.valid_frames_count = 0
 
-    def update(self, metrics: Dict, frame_number: int):
+    def update(self, metrics: Optional[Dict], frame_number: int):
         """
         Actualiza el historial con nuevas métricas.
 
@@ -260,22 +259,24 @@ class TacticalMetricsTracker:
             metrics: Dict con métricas del frame actual
             frame_number: Número del frame
         """
-        self.metrics_history['compactness'].append(metrics.get('compactness', 0.0))
-        self.metrics_history['pressure_height'].append(metrics.get('pressure_height', 0.0))
-        self.metrics_history['offensive_width'].append(metrics.get('offensive_width', 0.0))
-        centroid = metrics.get('centroid', (0.0, 0.0))
-        self.metrics_history['centroid_x'].append(centroid[0])
-        self.metrics_history['centroid_y'].append(centroid[1])
-        self.metrics_history['stretch_index'].append(metrics.get('stretch_index', 1.0))
-        self.metrics_history['defensive_depth'].append(metrics.get('defensive_depth', 0.0))
-        self.metrics_history['block_depth_m'].append(metrics.get('block_depth_m', 0.0))
-        self.metrics_history['block_width_m'].append(metrics.get('block_width_m', 0.0))
-        self.metrics_history['block_area_m2'].append(metrics.get('block_area_m2', 0.0))
-        self.metrics_history['def_line_left_m'].append(metrics.get('def_line_left_m', 0.0))
-        self.metrics_history['def_line_right_m'].append(metrics.get('def_line_right_m', 0.0))
+        if metrics is None:
+            return
+        self.metrics_history['compactness'].append(metrics.get('compactness'))
+        self.metrics_history['pressure_height'].append(metrics.get('pressure_height'))
+        self.metrics_history['offensive_width'].append(metrics.get('offensive_width'))
+        centroid = metrics.get('centroid')
+        if isinstance(centroid, (tuple, list)) and len(centroid) == 2:
+            self.metrics_history['centroid_x'].append(centroid[0])
+            self.metrics_history['centroid_y'].append(centroid[1])
+        self.metrics_history['stretch_index'].append(metrics.get('stretch_index'))
+        self.metrics_history['defensive_depth'].append(metrics.get('defensive_depth'))
+        self.metrics_history['block_depth_m'].append(metrics.get('block_depth_m'))
+        self.metrics_history['block_width_m'].append(metrics.get('block_width_m'))
+        self.metrics_history['block_area_m2'].append(metrics.get('block_area_m2'))
+        self.metrics_history['def_line_left_m'].append(metrics.get('def_line_left_m'))
+        self.metrics_history['def_line_right_m'].append(metrics.get('def_line_right_m'))
         self.metrics_history['frame_number'].append(frame_number)
-        if metrics.get('num_players', 0) >= 2:
-            self.valid_frames_count += 1
+        self.valid_frames_count += 1
 
     def get_statistics(self) -> Dict:
         """
@@ -291,16 +292,16 @@ class TacticalMetricsTracker:
                 continue
 
             if len(values) == 0:
-                stats[metric_name] = {'mean': 0.0, 'std': 0.0, 'min': 0.0, 'max': 0.0}
+                stats[metric_name] = {'mean': None, 'std': None, 'min': None, 'max': None, 'current': None}
                 continue
 
             values_array = np.array(list(values))
             stats[metric_name] = {
-                'mean': float(np.mean(values_array)),
-                'std': float(np.std(values_array)),
-                'min': float(np.min(values_array)),
-                'max': float(np.max(values_array)),
-                'current': float(values_array[-1]) if len(values_array) > 0 else 0.0
+                'mean': float(np.mean(values_array)) if len(values_array) > 0 else None,
+                'std': float(np.std(values_array)) if len(values_array) > 0 else None,
+                'min': float(np.min(values_array)) if len(values_array) > 0 else None,
+                'max': float(np.max(values_array)) if len(values_array) > 0 else None,
+                'current': float(values_array[-1]) if len(values_array) > 0 else None
             }
 
         stats['valid_frames'] = self.valid_frames_count
