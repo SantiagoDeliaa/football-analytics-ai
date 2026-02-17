@@ -444,7 +444,7 @@ if uploaded_video:
                     heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
                     heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
                     heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
-                    st.image(heatmap_color, caption="Heatmap Team 1", use_container_width=True)
+                    st.image(heatmap_color, caption="Heatmap Team 1", use_column_width=True)
             with col_h2:
                 h2 = stats.get('scouting_heatmaps', {}).get('team2', None)
                 if h2 is not None:
@@ -452,7 +452,7 @@ if uploaded_video:
                     heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
                     heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
                     heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
-                    st.image(heatmap_color, caption="Heatmap Team 2", use_container_width=True)
+                    st.image(heatmap_color, caption="Heatmap Team 2", use_column_width=True)
         else:
             st.warning("Scouting metrics not available for this video.")
 else:
