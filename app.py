@@ -663,7 +663,7 @@ if uploaded_video:
         st.markdown("- Escala logarítmica: resalta zonas menos frecuentes cuando hay una dominante")
 
     # Possession Tab
-    with tabs[5]:
+    with tabs[6]:
         if st.session_state.stats and 'possession' in st.session_state.stats:
             stats = st.session_state.stats
             possession = stats['possession']
