@@ -135,6 +135,8 @@ st.sidebar.subheader("3. Radar View")
 enable_radar = st.sidebar.checkbox("Habilitar Radar", value=True)
 enable_analytics = st.sidebar.checkbox("Habilitar Análisis Táctico", value=True,
                                        help="Calcula formaciones y métricas tácticas")
+enable_possession = st.sidebar.checkbox("Habilitar Análisis de Posesión", value=False,
+                                        help="Posesión de pelota, velocidad y distancia por jugador")
 
 pitch_model = None
 full_field_approx = False
@@ -191,7 +193,7 @@ if uploaded_video:
         f.write(uploaded_video.read())
 
     # Tabs for organization
-    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar", "🕵️ Scouting", "📘 Interpretación"])
+    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar", "🕵️ Scouting", "📘 Interpretación", "⚽ Posesión"])
 
     with tabs[0]:
         col_input, col_output = st.columns(2)
@@ -250,7 +252,8 @@ if uploaded_video:
                         detection_mode="players_and_ball",
                         img_size=512,
                         full_field_approx=full_field_approx,
-                        progress_callback=_on_progress
+                        progress_callback=_on_progress,
+                        enable_possession=enable_possession
                     )
 
                     progress_bar.progress(90)
@@ -658,6 +661,85 @@ if uploaded_video:
         st.markdown("- Representa frecuencia acumulada de presencia por zona")
         st.markdown("- Frecuencia relativa dentro del clip analizado")
         st.markdown("- Escala logarítmica: resalta zonas menos frecuentes cuando hay una dominante")
+
+    # Possession Tab
+    with tabs[5]:
+        if st.session_state.stats and 'possession' in st.session_state.stats:
+            stats = st.session_state.stats
+            possession = stats['possession']
+            speed_dist = stats.get('speed_distance', {})
+
+            st.subheader("⚽ Posesión de Pelota")
+
+            col_p1, col_p2, col_p3 = st.columns(3)
+            with col_p1:
+                st.metric("Team 1 Posesión", f"{possession['team1_possession_pct']:.1f}%")
+            with col_p2:
+                st.metric("Team 2 Posesión", f"{possession['team2_possession_pct']:.1f}%")
+            with col_p3:
+                st.metric("Frames Disputados", possession['contested_frames'])
+
+            # Pie chart de posesión
+            contested_pct = 100 - possession['team1_possession_pct'] - possession['team2_possession_pct']
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=["Team 1", "Team 2", "Sin posesión"],
+                values=[
+                    possession['team1_possession_pct'],
+                    possession['team2_possession_pct'],
+                    max(0, contested_pct),
+                ],
+                marker_colors=["#00FF00", "#00BFFF", "#888888"],
+            )])
+            fig_pie.update_layout(title="Distribución de Posesión")
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+            # Top poseedores
+            if possession.get('top_possessors'):
+                st.subheader("Jugadores con Más Posesión")
+                df_poss = pd.DataFrame(possession['top_possessors'])
+                df_poss.columns = ['ID Jugador', 'Frames', 'Equipo']
+                st.dataframe(df_poss, use_container_width=True, hide_index=True)
+
+            st.divider()
+
+            # Velocidad y Distancia
+            if speed_dist:
+                st.subheader("Velocidad y Distancia")
+                per_team = speed_dist.get('per_team', {})
+
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    st.markdown("### Team 1")
+                    t1 = per_team.get('team1', {})
+                    st.metric("Distancia Total", f"{t1.get('total_distance_m', 0):.0f} m")
+                    st.metric("Dist. Prom. por Jugador", f"{t1.get('avg_distance_m', 0):.0f} m")
+                    st.metric("Velocidad Máxima", f"{t1.get('max_speed_kmh', 0):.1f} km/h")
+                with col_s2:
+                    st.markdown("### Team 2")
+                    t2 = per_team.get('team2', {})
+                    st.metric("Distancia Total", f"{t2.get('total_distance_m', 0):.0f} m")
+                    st.metric("Dist. Prom. por Jugador", f"{t2.get('avg_distance_m', 0):.0f} m")
+                    st.metric("Velocidad Máxima", f"{t2.get('max_speed_kmh', 0):.1f} km/h")
+
+                # Tabla por jugador
+                if 'per_player' in speed_dist:
+                    with st.expander("Ver detalle por jugador"):
+                        rows = []
+                        for tid, data in speed_dist['per_player'].items():
+                            rows.append({
+                                'ID': tid,
+                                'Equipo': data['team'],
+                                'Distancia (m)': round(data['distance_m'], 1),
+                                'Vel. Máx (km/h)': round(data.get('max_speed_kmh', 0), 1),
+                            })
+                        if rows:
+                            df_speed = pd.DataFrame(rows).sort_values('Distancia (m)', ascending=False)
+                            st.dataframe(df_speed, use_container_width=True, hide_index=True)
+        else:
+            if enable_possession:
+                st.info("Los datos de posesión aparecerán aquí después de procesar el video.")
+            else:
+                st.warning("Activa 'Habilitar Análisis de Posesión' en el sidebar antes de procesar.")
 else:
     st.info("👈 Sube un video para comenzar el análisis táctico")
 
