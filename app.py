@@ -16,6 +16,63 @@ import plotly.graph_objects as go
 import numpy as np
 import cv2
 
+def draw_pitch_base(width_px: int, height_px: int) -> np.ndarray:
+    pitch = np.zeros((height_px, width_px, 3), dtype=np.uint8)
+    pitch[:, :] = (20, 70, 20)
+    line_color = (255, 255, 255)
+    thickness = max(1, int(min(width_px, height_px) * 0.004))
+    cv2.rectangle(pitch, (0, 0), (width_px - 1, height_px - 1), line_color, thickness)
+    mid_x = width_px // 2
+    cv2.line(pitch, (mid_x, 0), (mid_x, height_px - 1), line_color, thickness)
+    circle_radius = int(height_px * 0.12)
+    cv2.circle(pitch, (mid_x, height_px // 2), circle_radius, line_color, thickness)
+    box_w = int(width_px * 0.17)
+    box_h = int(height_px * 0.36)
+    box_y1 = (height_px - box_h) // 2
+    box_y2 = box_y1 + box_h
+    cv2.rectangle(pitch, (0, box_y1), (box_w, box_y2), line_color, thickness)
+    cv2.rectangle(pitch, (width_px - box_w, box_y1), (width_px - 1, box_y2), line_color, thickness)
+    return pitch
+
+def render_heatmap_overlay(heatmap_small: np.ndarray, out_w: int, out_h: int, flip_vertical: bool, use_log: bool) -> np.ndarray:
+    heatmap = heatmap_small.astype(np.float32)
+    if flip_vertical:
+        heatmap = np.flipud(heatmap)
+    if use_log:
+        heatmap = np.log1p(heatmap)
+    positive = heatmap[heatmap > 0]
+    if positive.size > 0:
+        p2 = float(np.percentile(positive, 2))
+        p98 = float(np.percentile(positive, 98))
+        if p98 <= p2:
+            p98 = p2 + 1e-6
+        heatmap = np.clip(heatmap, p2, p98)
+        heatmap = (heatmap - p2) / (p98 - p2)
+        heatmap_uint8 = (heatmap * 255).astype(np.uint8)
+    else:
+        heatmap_uint8 = np.zeros_like(heatmap, dtype=np.uint8)
+    heatmap_up = cv2.resize(heatmap_uint8, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
+    cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_JET
+    heatmap_color = cv2.applyColorMap(heatmap_up, cmap)
+    alpha = (heatmap_up.astype(np.float32) / 255.0) * 0.75
+    alpha[heatmap_up < 10] = 0.0
+    alpha_3 = np.dstack([alpha, alpha, alpha])
+    pitch = draw_pitch_base(out_w, out_h).astype(np.float32)
+    overlay = heatmap_color.astype(np.float32)
+    blended = pitch * (1.0 - alpha_3) + overlay * alpha_3
+    return blended.astype(np.uint8)
+
+def draw_heatmap_legend(height_px: int, width_px: int = 70) -> np.ndarray:
+    grad = np.linspace(1, 0, height_px, dtype=np.float32)
+    grad_img = (grad[:, None] * 255).astype(np.uint8)
+    grad_img = np.repeat(grad_img, width_px, axis=1)
+    cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_JET
+    legend = cv2.applyColorMap(grad_img, cmap)
+    text_color = (255, 255, 255)
+    cv2.putText(legend, "Densidad", (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, text_color, 1, cv2.LINE_AA)
+    cv2.putText(legend, "relativa", (5, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.45, text_color, 1, cv2.LINE_AA)
+    return legend
+
 st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_sidebar_state="expanded")
 
 st.title("⚽ Soccer Analytics AI")
@@ -396,6 +453,10 @@ if uploaded_video:
         if st.session_state.stats and 'scouting_heatmaps' in st.session_state.stats:
             stats = st.session_state.stats
             st.subheader("🕵️ Scouting")
+            with st.expander("Cómo interpretar estas métricas"):
+                st.markdown("- Compactación: profundidad/ancho del bloque en metros")
+                st.markdown("- Línea defensiva: altura promedio del último bloque")
+                st.markdown("- Heatmap: distribución espacial de presencia")
             col_t1, col_t2 = st.columns(2)
             if 'timeline' in stats:
                 timeline = stats['timeline']
@@ -436,23 +497,34 @@ if uploaded_video:
                         fig_d.update_layout(title='Línea Defensiva', xaxis_title='Frame', yaxis_title='Metros', hovermode='x unified')
                         st.plotly_chart(fig_d, use_container_width=True)
             st.subheader("Heatmaps")
+            flip_vertical = st.checkbox("Invertir eje vertical (Y)", value=True)
+            use_log = st.checkbox("Usar escala logarítmica", value=False)
             col_h1, col_h2 = st.columns(2)
+            heatmap_meta = stats.get('scouting_heatmaps', {})
+            out_w = 840
+            out_h = int(out_w * 68 / 105)
+            legend = draw_heatmap_legend(out_h)
             with col_h1:
-                h1 = stats.get('scouting_heatmaps', {}).get('team1', None)
+                h1 = heatmap_meta.get('team1', None)
                 if h1 is not None:
                     heatmap = np.array(h1, dtype=np.float32)
-                    heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
-                    heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
-                    heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
-                    st.image(heatmap_color, caption="Heatmap Team 1", use_column_width=True)
+                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                    combo = np.concatenate([rendered, legend], axis=1)
+                    st.image(combo, caption="Heatmap Team 1", use_column_width=True)
+                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
             with col_h2:
-                h2 = stats.get('scouting_heatmaps', {}).get('team2', None)
+                h2 = heatmap_meta.get('team2', None)
                 if h2 is not None:
                     heatmap = np.array(h2, dtype=np.float32)
-                    heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
-                    heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
-                    heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
-                    st.image(heatmap_color, caption="Heatmap Team 2", use_column_width=True)
+                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                    combo = np.concatenate([rendered, legend], axis=1)
+                    st.image(combo, caption="Heatmap Team 2", use_column_width=True)
+                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
+            with st.expander("Cómo interpretar el Heatmap"):
+                st.markdown("- Colores más calientes = más presencia")
+                st.markdown("- Muestra zonas de influencia por equipo")
+                st.markdown("- Depende del tracking y homografía")
+                st.markdown("- Densidad relativa al clip")
         else:
             st.warning("Scouting metrics not available for this video.")
 else:
