@@ -69,10 +69,8 @@ def draw_heatmap_legend(height_px: int, width_px: int = 90) -> np.ndarray:
     cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_HOT
     legend = cv2.applyColorMap(grad_img, cmap)
     text_color = (255, 255, 255)
-    cv2.putText(legend, "Frecuencia", (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-    cv2.putText(legend, "relativa", (5, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-    cv2.putText(legend, "(en este", (5, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-    cv2.putText(legend, "clip)", (5, 66), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
+    cv2.putText(legend, "Presencia", (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
+    cv2.putText(legend, "(clip)", (5, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
     return legend
 
 def format_mmss(seconds: float) -> str:
@@ -499,13 +497,13 @@ if uploaded_video:
                 bullets = []
                 strong = confidence_level != "Baja"
                 if depth_mean > 40:
-                    bullets.append("Equipo estirado y con transiciones" if strong else "Sugiere equipo estirado y transiciones")
+                    bullets.append("Equipo muy largo (transición)" if strong else "Sugiere equipo muy largo (transición)")
                 elif depth_mean < 30:
-                    bullets.append("Bloque compacto en profundidad" if strong else "Podría indicar bloque compacto en profundidad")
+                    bullets.append("Bloque compacto en profundidad" if strong else "Podría indicar bloque compacto")
                 if width_mean > 35:
-                    bullets.append("Equipo abierto en amplitud" if strong else "Sugiere equipo abierto en amplitud")
+                    bullets.append("Equipo abierto en amplitud" if strong else "Sugiere equipo abierto")
                 elif width_mean < 25:
-                    bullets.append("Equipo cerrado en amplitud" if strong else "Podría indicar equipo cerrado en amplitud")
+                    bullets.append("Equipo cerrado en amplitud" if strong else "Podría indicar equipo cerrado")
                 line_avg = (left_mean + right_mean) / 2.0
                 if line_avg >= 70:
                     bullets.append("Línea defensiva alta" if strong else "Sugiere línea defensiva alta")
@@ -521,24 +519,41 @@ if uploaded_video:
                 st.markdown("**Team 1**")
                 level1, ratio1 = compute_confidence('team1')
                 if level1:
-                    st.markdown(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                    if level1 == "Alta":
+                        st.success(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                    elif level1 == "Media":
+                        st.info(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                    else:
+                        st.warning(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
                     if level1 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
+                        st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
                     elif level1 == "Media":
                         st.info("Interpretación moderada...")
+                else:
+                    st.info("Confianza: N/D")
                 for item in build_summary('team1', level1):
                     st.markdown(f"- {item}")
             with col_s2:
                 st.markdown("**Team 2**")
                 level2, ratio2 = compute_confidence('team2')
                 if level2:
-                    st.markdown(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                    if level2 == "Alta":
+                        st.success(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                    elif level2 == "Media":
+                        st.info(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                    else:
+                        st.warning(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
                     if level2 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
+                        st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
                     elif level2 == "Media":
                         st.info("Interpretación moderada...")
+                else:
+                    st.info("Confianza: N/D")
                 for item in build_summary('team2', level2):
                     st.markdown(f"- {item}")
+            st.caption("Qué mirar primero: (1) compactación, (2) línea defensiva, (3) heatmap.")
             col_t1, col_t2 = st.columns(2)
             if 'timeline' in stats:
                 timeline = stats['timeline']
@@ -562,7 +577,8 @@ if uploaded_video:
                                 tickvals = x_vals[::step]
                                 ticktext = [format_mmss(t) for t in tickvals]
                         st.markdown("#### Compactación ℹ️")
-                        st.caption("Cuánto espacio ocupa el equipo. Profundidad = largo (defensa→ataque). Ancho = apertura lateral.")
+                        st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
+                        st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
                         fig_c = go.Figure()
                         fig_c.add_trace(go.Scatter(x=x_vals, y=depth, name='Profundidad (m)', line=dict(color='green')))
                         fig_c.add_trace(go.Scatter(x=x_vals, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
@@ -571,7 +587,9 @@ if uploaded_video:
                             fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                         st.plotly_chart(fig_c, use_container_width=True)
                         st.markdown("#### Línea defensiva ℹ️")
-                        st.caption("Altura media del bloque defensivo. Valores altos = línea alta, valores bajos = repliegue.")
+                        st.caption("Qué es: altura del último bloque en X (0–105m).")
+                        st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
+                        st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
                         fig_d = go.Figure()
                         fig_d.add_trace(go.Scatter(x=x_vals, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
                         fig_d.add_trace(go.Scatter(x=x_vals, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
@@ -599,7 +617,8 @@ if uploaded_video:
                                 tickvals = x_vals[::step]
                                 ticktext = [format_mmss(t) for t in tickvals]
                         st.markdown("#### Compactación ℹ️")
-                        st.caption("Cuánto espacio ocupa el equipo. Profundidad = largo (defensa→ataque). Ancho = apertura lateral.")
+                        st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
+                        st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
                         fig_c = go.Figure()
                         fig_c.add_trace(go.Scatter(x=x_vals, y=depth, name='Profundidad (m)', line=dict(color='green')))
                         fig_c.add_trace(go.Scatter(x=x_vals, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
@@ -608,7 +627,9 @@ if uploaded_video:
                             fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                         st.plotly_chart(fig_c, use_container_width=True)
                         st.markdown("#### Línea defensiva ℹ️")
-                        st.caption("Altura media del bloque defensivo. Valores altos = línea alta, valores bajos = repliegue.")
+                        st.caption("Qué es: altura del último bloque en X (0–105m).")
+                        st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
+                        st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
                         fig_d = go.Figure()
                         fig_d.add_trace(go.Scatter(x=x_vals, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
                         fig_d.add_trace(go.Scatter(x=x_vals, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
@@ -619,7 +640,7 @@ if uploaded_video:
             st.subheader("Heatmaps")
             flip_vertical = st.checkbox("Invertir eje vertical (Y)", value=True)
             use_log = st.checkbox("Usar escala logarítmica", value=False)
-            st.caption("Escala log: resalta zonas de menor frecuencia cuando hay una zona dominante.")
+            st.caption("Escala log: hace visibles zonas con poca presencia cuando hay una zona dominante.")
             col_h1, col_h2 = st.columns(2)
             heatmap_meta = stats.get('scouting_heatmaps', {})
             out_w = 840
@@ -629,7 +650,7 @@ if uploaded_video:
                 h1 = heatmap_meta.get('team1', None)
                 if h1 is not None:
                     st.markdown("#### Heatmap ℹ️")
-                    st.caption("Frecuencia de presencia por zona. Rojo/amarillo = más presencia, azul = menos.")
+                    st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
                     heatmap = np.array(h1, dtype=np.float32)
                     rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
                     combo = np.concatenate([rendered, legend], axis=1)
@@ -639,7 +660,7 @@ if uploaded_video:
                 h2 = heatmap_meta.get('team2', None)
                 if h2 is not None:
                     st.markdown("#### Heatmap ℹ️")
-                    st.caption("Frecuencia de presencia por zona. Rojo/amarillo = más presencia, azul = menos.")
+                    st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
                     heatmap = np.array(h2, dtype=np.float32)
                     rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
                     combo = np.concatenate([rendered, legend], axis=1)
@@ -650,17 +671,24 @@ if uploaded_video:
     with tabs[5]:
         st.subheader("📘 Interpretación")
         st.markdown("### Compactación (profundidad/ancho)")
-        st.markdown("- Qué mide: el espacio que ocupa el equipo en el campo")
-        st.markdown("- Cómo leer: si sube, el equipo se estira; si baja, se compacta")
-        st.markdown("- Ejemplos: bloque bajo, transición rápida, amplitud ofensiva")
+        st.markdown("- Qué mide: tamaño del bloque del equipo en el campo")
+        st.markdown("- Cómo leerlo: si sube, el equipo se estira; si baja, se compacta")
+        st.markdown("- Señales típicas: picos = transición; valles = bloque bajo")
+        st.markdown("- Ejemplos: si Profundidad sube fuerte y Ancho sube → contragolpe / equipo estirado")
+        st.markdown("- Cuándo desconfiar: tracking inestable o homografía saltando")
         st.markdown("### Línea defensiva")
-        st.markdown("- Posición en metros sobre el eje X del campo (0–105m)")
-        st.markdown("- Si sube: línea más alta; si baja: repliegue")
-        st.markdown("- Hoy se muestran dos líneas (izquierda/derecha) como hipótesis; depende del arco defendido")
+        st.markdown("- Qué mide: posición en metros sobre el eje X del campo (0–105m)")
+        st.markdown("- Cómo leerlo: sube = línea alta; baja = repliegue/bloque bajo")
+        st.markdown("- Señales típicas: caída sostenida → bloque bajo")
+        st.markdown("- Ejemplo: si Línea defensiva cae y se mantiene baja → bloque bajo")
+        st.markdown("- Cuándo desconfiar: cambios bruscos por cámara o tracking")
         st.markdown("### Heatmap")
-        st.markdown("- Representa frecuencia acumulada de presencia por zona")
-        st.markdown("- Frecuencia relativa dentro del clip analizado")
-        st.markdown("- Escala logarítmica: resalta zonas menos frecuentes cuando hay una dominante")
+        st.markdown("- Qué mide: frecuencia acumulada de presencia por zona")
+        st.markdown("- Cómo leerlo: zonas rojas = mayor presencia")
+        st.markdown("- Señales típicas: concentración en banda o carril central")
+        st.markdown("- Densidad relativa: se compara dentro del mismo clip")
+        st.markdown("- Escala log: resalta zonas con poca presencia cuando hay una dominante")
+        st.markdown("- Cuándo desconfiar: homografía imprecisa o poca muestra")
 
     # Possession Tab
     with tabs[6]:
