@@ -5,6 +5,8 @@ Interfaz Streamlit mejorada con análisis táctico completo
 
 import streamlit as st
 from pathlib import Path
+import numpy as np
+import cv2
 from src.models.load_model import load_roboflow_model
 from src.controllers.process_video import process_video
 from src.utils.config import INPUTS_DIR, OUTPUTS_DIR
@@ -125,9 +127,9 @@ if uploaded_video:
         f.write(uploaded_video.read())
 
     # Tabs for organization
-    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar"])
+    main_tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar"])
 
-    with tabs[0]:
+    with main_tabs[0]:
         col_input, col_output = st.columns(2)
 
         with col_input:
@@ -208,95 +210,181 @@ if uploaded_video:
                         st.code(traceback.format_exc())
 
     # Statistics Tab
-    with tabs[1]:
+    with main_tabs[1]:
         if st.session_state.stats:
             stats = st.session_state.stats
 
             st.subheader("📊 Análisis Táctico")
 
-            # Summary metrics
-            col1, col2, col3 = st.columns(3)
+            stats_tabs = st.tabs(["Overview", "Formations", "Scouting"])
 
-            with col1:
-                st.metric("Duración", f"{stats.get('duration_seconds', 0):.1f}s")
-            with col2:
-                st.metric("Frames Procesados", stats.get('total_frames', 0))
-            with col3:
-                fps = stats.get('total_frames', 0) / stats.get('duration_seconds', 1)
-                st.metric("FPS", f"{fps:.1f}")
+            with stats_tabs[0]:
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
 
-            st.divider()
+                with col1:
+                    st.metric("Duración", f"{stats.get('duration_seconds', 0):.1f}s")
+                with col2:
+                    st.metric("Frames Procesados", stats.get('total_frames', 0))
+                with col3:
+                    fps = stats.get('total_frames', 0) / stats.get('duration_seconds', 1)
+                    st.metric("FPS", f"{fps:.1f}")
 
-            # Formations
-            if 'formations' in stats:
-                st.subheader("⚽ Formaciones Detectadas")
+                st.divider()
 
-                col_t1, col_t2 = st.columns(2)
+                # Tactical Metrics
+                if 'metrics' in stats:
+                    st.subheader("📈 Métricas Tácticas")
 
-                with col_t1:
-                    st.markdown("### 🟢 Team 1")
-                    form1 = stats['formations'].get('team1', {}).get('most_common', 'N/A')
-                    st.metric("Formación más común", form1, help="Basada en análisis temporal")
+                    metrics1 = stats['metrics'].get('team1', {})
+                    metrics2 = stats['metrics'].get('team2', {})
 
-                with col_t2:
-                    st.markdown("### 🔵 Team 2")
-                    form2 = stats['formations'].get('team2', {}).get('most_common', 'N/A')
-                    st.metric("Formación más común", form2, help="Basada en análisis temporal")
+                    # Comparison table
+                    comparison_data = {
+                        'Métrica': ['Presión (m)', 'Amplitud (m)', 'Compactación (m²)'],
+                        'Team 1': [
+                            f"{metrics1.get('pressure_height', {}).get('mean', 0):.1f}",
+                            f"{metrics1.get('offensive_width', {}).get('mean', 0):.1f}",
+                            f"{metrics1.get('compactness', {}).get('mean', 0):.0f}"
+                        ],
+                        'Team 2': [
+                            f"{metrics2.get('pressure_height', {}).get('mean', 0):.1f}",
+                            f"{metrics2.get('offensive_width', {}).get('mean', 0):.1f}",
+                            f"{metrics2.get('compactness', {}).get('mean', 0):.0f}"
+                        ]
+                    }
 
-            st.divider()
+                    df_comparison = pd.DataFrame(comparison_data)
+                    st.dataframe(df_comparison, use_container_width=True, hide_index=True)
 
-            # Tactical Metrics
-            if 'metrics' in stats:
-                st.subheader("📈 Métricas Tácticas")
+                    # Detailed metrics
+                    with st.expander("Ver métricas detalladas"):
+                        col_det1, col_det2 = st.columns(2)
 
-                metrics1 = stats['metrics'].get('team1', {})
-                metrics2 = stats['metrics'].get('team2', {})
+                        with col_det1:
+                            st.markdown("#### Team 1")
+                            if metrics1:
+                                for metric_name, values in metrics1.items():
+                                    if isinstance(values, dict) and 'mean' in values:
+                                        st.text(f"{metric_name}:")
+                                        st.text(f"  Media: {values['mean']:.2f}")
+                                        st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
 
-                # Comparison table
-                comparison_data = {
-                    'Métrica': ['Presión (m)', 'Amplitud (m)', 'Compactación (m²)'],
-                    'Team 1': [
-                        f"{metrics1.get('pressure_height', {}).get('mean', 0):.1f}",
-                        f"{metrics1.get('offensive_width', {}).get('mean', 0):.1f}",
-                        f"{metrics1.get('compactness', {}).get('mean', 0):.0f}"
-                    ],
-                    'Team 2': [
-                        f"{metrics2.get('pressure_height', {}).get('mean', 0):.1f}",
-                        f"{metrics2.get('offensive_width', {}).get('mean', 0):.1f}",
-                        f"{metrics2.get('compactness', {}).get('mean', 0):.0f}"
-                    ]
-                }
+                        with col_det2:
+                            st.markdown("#### Team 2")
+                            if metrics2:
+                                for metric_name, values in metrics2.items():
+                                    if isinstance(values, dict) and 'mean' in values:
+                                        st.text(f"{metric_name}:")
+                                        st.text(f"  Media: {values['mean']:.2f}")
+                                        st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
 
-                df_comparison = pd.DataFrame(comparison_data)
-                st.dataframe(df_comparison, use_container_width=True, hide_index=True)
+            with stats_tabs[1]:
+                # Formations
+                if 'formations' in stats:
+                    st.subheader("⚽ Formaciones Detectadas")
 
-                # Detailed metrics
-                with st.expander("Ver métricas detalladas"):
-                    col_det1, col_det2 = st.columns(2)
+                    col_t1, col_t2 = st.columns(2)
 
-                    with col_det1:
-                        st.markdown("#### Team 1")
-                        if metrics1:
-                            for metric_name, values in metrics1.items():
-                                if isinstance(values, dict) and 'mean' in values:
-                                    st.text(f"{metric_name}:")
-                                    st.text(f"  Media: {values['mean']:.2f}")
-                                    st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
+                    with col_t1:
+                        st.markdown("### 🟢 Team 1")
+                        form1 = stats['formations'].get('team1', {}).get('most_common', 'N/A')
+                        st.metric("Formación más común", form1, help="Basada en análisis temporal")
 
-                    with col_det2:
-                        st.markdown("#### Team 2")
-                        if metrics2:
-                            for metric_name, values in metrics2.items():
-                                if isinstance(values, dict) and 'mean' in values:
-                                    st.text(f"{metric_name}:")
-                                    st.text(f"  Media: {values['mean']:.2f}")
-                                    st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
+                    with col_t2:
+                        st.markdown("### 🔵 Team 2")
+                        form2 = stats['formations'].get('team2', {}).get('most_common', 'N/A')
+                        st.metric("Formación más común", form2, help="Basada en análisis temporal")
+                else:
+                    st.info("No hay datos de formaciones en este video.")
+
+            with stats_tabs[2]:
+                st.subheader("🔎 Scouting")
+
+                has_scouting = (
+                    'timeline' in stats and
+                    'scouting_heatmaps' in stats and
+                    'team1' in stats.get('timeline', {}) and
+                    'team2' in stats.get('timeline', {}) and
+                    'team1' in stats.get('scouting_heatmaps', {}) and
+                    'team2' in stats.get('scouting_heatmaps', {})
+                )
+
+                if not has_scouting:
+                    st.warning("Scouting metrics not available for this video.")
+                else:
+                    timeline = stats['timeline']
+                    scouting_heatmaps = stats['scouting_heatmaps']
+
+                    col_team1, col_team2 = st.columns(2)
+
+                    def plot_scouting_team(team_label: str, team_key: str, container):
+                        with container:
+                            team_timeline = timeline.get(team_key, {})
+
+                            required_keys = [
+                                'frame_number', 'block_depth_m', 'block_width_m',
+                                'def_line_left_m', 'def_line_right_m'
+                            ]
+                            if any(k not in team_timeline for k in required_keys):
+                                st.warning("Scouting metrics not available for this video.")
+                                return
+
+                            frames = team_timeline.get('frame_number', [])
+                            block_depth = team_timeline.get('block_depth_m', [])
+                            block_width = team_timeline.get('block_width_m', [])
+                            def_left = team_timeline.get('def_line_left_m', [])
+                            def_right = team_timeline.get('def_line_right_m', [])
+
+                            st.markdown(f"### {team_label}")
+
+                            fig_block = go.Figure()
+                            fig_block.add_trace(go.Scatter(x=frames, y=block_depth, name='block_depth_m'))
+                            fig_block.add_trace(go.Scatter(x=frames, y=block_width, name='block_width_m'))
+                            fig_block.update_layout(
+                                title='Compactación',
+                                xaxis_title='Frame',
+                                yaxis_title='Metros',
+                                hovermode='x unified'
+                            )
+                            st.plotly_chart(fig_block, use_container_width=True)
+
+                            fig_def = go.Figure()
+                            fig_def.add_trace(go.Scatter(x=frames, y=def_left, name='def_line_left_m'))
+                            fig_def.add_trace(go.Scatter(x=frames, y=def_right, name='def_line_right_m'))
+                            fig_def.update_layout(
+                                title='Línea Defensiva',
+                                xaxis_title='Frame',
+                                yaxis_title='Metros',
+                                hovermode='x unified'
+                            )
+                            st.plotly_chart(fig_def, use_container_width=True)
+
+                            heatmap_data = scouting_heatmaps.get(team_key)
+                            if heatmap_data is None:
+                                st.warning("Scouting metrics not available for this video.")
+                                return
+
+                            heatmap = np.array(heatmap_data, dtype=np.float32)
+                            if heatmap.size == 0:
+                                st.warning("Scouting metrics not available for this video.")
+                                return
+
+                            heatmap_blur = cv2.GaussianBlur(heatmap, (7, 7), 0)
+                            heatmap_norm = cv2.normalize(heatmap_blur, None, 0, 255, cv2.NORM_MINMAX)
+                            heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
+
+                            st.markdown("#### Heatmap 2D")
+                            st.image(heatmap_color, caption=f"Heatmap {team_label}")
+
+                    plot_scouting_team("Team 1", "team1", col_team1)
+                    plot_scouting_team("Team 2", "team2", col_team2)
 
         else:
             st.info("📊 Las estadísticas aparecerán aquí después de procesar el video")
 
     # Charts Tab
-    with tabs[2]:
+    with main_tabs[2]:
         if st.session_state.stats and 'timeline' in st.session_state.stats:
             st.subheader("📈 Evolución Temporal")
 
@@ -357,7 +445,7 @@ if uploaded_video:
             st.info("📈 Los gráficos aparecerán aquí después de procesar el video con análisis táctico")
 
     # Export Tab
-    with tabs[3]:
+    with main_tabs[3]:
         if st.session_state.stats:
             st.subheader("💾 Exportar Datos")
 
