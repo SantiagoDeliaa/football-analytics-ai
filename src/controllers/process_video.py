@@ -534,7 +534,8 @@ def process_video(
     img_size: int = 640,
     full_field_approx: bool = False,
     progress_callback=None,
-    enable_possession: bool = False
+    enable_possession: bool = False,
+    disable_inertia: bool = False
 ):
     """
     Procesa video completo con detección y tracking mejorado usando múltiples modelos.
@@ -597,6 +598,8 @@ def process_video(
         # Crear configuración con el tipo correcto
         pitch_config = SoccerPitchConfiguration(model_type=pitch_model_type)
         homography_manager = HomographyManager()
+        if disable_inertia:
+            homography_manager.max_inertia_frames = 0
 
     # Mejora J: Anotadores estilo broadcast (elipse + trace)
     team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
@@ -640,6 +643,18 @@ def process_video(
     heatmap_samples_count = 0
     debug_scouting = False
     _heatmap_valid_frame_counter = 0
+    homography_telemetry = {
+        'frame_number': [],
+        'homography_mode': [],
+        'reproj_error': [],
+        'delta_H': [],
+        'team1_centroid_x': [],
+        'team1_centroid_y': [],
+        'team2_centroid_x': [],
+        'team2_centroid_y': [],
+        'team1_percent_out_of_bounds': [],
+        'team2_percent_out_of_bounds': []
+    }
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1105,9 +1120,22 @@ def process_video(
                         print("fallback full-screen")
 
                 # Si tenemos un transformer válido, proyectamos y dibujamos
+                homography_state = getattr(homography_manager, 'last_state', "")
+                if transformer is None:
+                    homography_mode = "fallback"
+                elif homography_state.startswith("UPDATED"):
+                    homography_mode = "tracking"
+                elif homography_state == "REUSED_INERTIA":
+                    homography_mode = "inertia"
+                else:
+                    homography_mode = "fallback"
                 if transformer:
                     try:
                         points_to_transform = {}
+                        team1_centroid = None
+                        team2_centroid = None
+                        team1_oob = None
+                        team2_oob = None
 
                         def get_bottom_center(dets):
                             return np.column_stack([
@@ -1145,6 +1173,17 @@ def process_video(
                                 points_to_transform['team2'] = smooth_positions(t2_dets.tracker_id, raw_pos)
                             else:
                                 points_to_transform['team2'] = raw_pos
+                        
+                        if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
+                            t1_arr = points_to_transform['team1']
+                            team1_centroid = (float(np.mean(t1_arr[:, 0])), float(np.mean(t1_arr[:, 1])))
+                            oob_mask = (t1_arr[:, 0] < 0) | (t1_arr[:, 0] > 105) | (t1_arr[:, 1] < 0) | (t1_arr[:, 1] > 68)
+                            team1_oob = float(np.sum(oob_mask) / max(len(t1_arr), 1) * 100.0)
+                        if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
+                            t2_arr = points_to_transform['team2']
+                            team2_centroid = (float(np.mean(t2_arr[:, 0])), float(np.mean(t2_arr[:, 1])))
+                            oob_mask = (t2_arr[:, 0] < 0) | (t2_arr[:, 0] > 105) | (t2_arr[:, 1] < 0) | (t2_arr[:, 1] > 68)
+                            team2_oob = float(np.sum(oob_mask) / max(len(t2_arr), 1) * 100.0)
 
                         # Transformar árbitros (sin suavizar mucho ya que se mueven menos)
                         if any(referee_mask):
@@ -1249,7 +1288,11 @@ def process_video(
                             team2_tracker.update(metrics2, frame_count)
                         
                         _heatmap_valid_frame_counter += 1
-                        if _heatmap_valid_frame_counter % heatmap_sample_every == 0:
+                        last_reproj = getattr(homography_manager, 'last_reproj_error', None)
+                        allow_heatmap = homography_mode == "tracking"
+                        if not allow_heatmap and homography_mode == "inertia":
+                            allow_heatmap = last_reproj is not None and last_reproj < homography_manager.max_reproj_error
+                        if allow_heatmap and _heatmap_valid_frame_counter % heatmap_sample_every == 0:
                             sampled = False
                             if 'team1' in points_to_transform and len(points_to_transform['team1']) >= 6:
                                 sampled = True
@@ -1276,6 +1319,17 @@ def process_video(
                             if debug_scouting and frame_count % 100 == 0:
                                 print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
+                        homography_telemetry['frame_number'].append(frame_count)
+                        homography_telemetry['homography_mode'].append(homography_mode)
+                        homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
+                        homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                        homography_telemetry['team1_centroid_x'].append(team1_centroid[0] if team1_centroid else None)
+                        homography_telemetry['team1_centroid_y'].append(team1_centroid[1] if team1_centroid else None)
+                        homography_telemetry['team2_centroid_x'].append(team2_centroid[0] if team2_centroid else None)
+                        homography_telemetry['team2_centroid_y'].append(team2_centroid[1] if team2_centroid else None)
+                        homography_telemetry['team1_percent_out_of_bounds'].append(team1_oob)
+                        homography_telemetry['team2_percent_out_of_bounds'].append(team2_oob)
+
                         # Fix A: usar radar con métricas tácticas
                         current_formations = {}
                         current_metrics = {}
@@ -1326,6 +1380,25 @@ def process_video(
                             trails=radar_trails if radar_trails else None,
                             offside_x=radar_offside if radar_offside else None,
                         )
+                        radar_scale = 8
+                        ox = int(pitch_config.margins * radar_scale)
+                        oy = int(pitch_config.margins * radar_scale)
+                        def radar_px(x_m, y_m):
+                            x = int(x_m * radar_scale) + ox
+                            y = int(y_m * radar_scale) + oy
+                            x = max(0, min(x, radar_view.shape[1] - 1))
+                            y = max(0, min(y, radar_view.shape[0] - 1))
+                            return x, y
+                        if team1_centroid is not None:
+                            cx, cy = radar_px(team1_centroid[0], team1_centroid[1])
+                            cv2.circle(radar_view, (cx, cy), 10, (0, 255, 0), -1)
+                            cv2.putText(radar_view, f"T1 ({team1_centroid[0]:.1f},{team1_centroid[1]:.1f})", (cx + 8, cy - 8),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                        if team2_centroid is not None:
+                            cx, cy = radar_px(team2_centroid[0], team2_centroid[1])
+                            cv2.circle(radar_view, (cx, cy), 10, (255, 191, 0), -1)
+                            cv2.putText(radar_view, f"T2 ({team2_centroid[0]:.1f},{team2_centroid[1]:.1f})", (cx + 8, cy - 8),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
                         # Mantener horizontal (sin rotación)
                         # Tamaño: 22% del ancho (reducido para no molestar)
@@ -1351,6 +1424,17 @@ def process_video(
                             annotated_frame[offset_y:offset_y+new_h, offset_x:offset_x+new_w] = blended
                     except Exception as e:
                         print(f"Error dibujando radar: {e}")
+                else:
+                    homography_telemetry['frame_number'].append(frame_count)
+                    homography_telemetry['homography_mode'].append(homography_mode)
+                    homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
+                    homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                    homography_telemetry['team1_centroid_x'].append(None)
+                    homography_telemetry['team1_centroid_y'].append(None)
+                    homography_telemetry['team2_centroid_x'].append(None)
+                    homography_telemetry['team2_centroid_y'].append(None)
+                    homography_telemetry['team1_percent_out_of_bounds'].append(None)
+                    homography_telemetry['team2_percent_out_of_bounds'].append(None)
 
             # Fallback: posesión píxeles si no se pudo hacer métrico
             if possession_tracker is not None and pitch_config and not _possession_assigned_metric:
@@ -1461,6 +1545,11 @@ def process_video(
                 'bin_size_m': [105 / 26.0, 68 / 17.0],
                 'total_samples': heatmap_samples_count,
                 'sample_rate': heatmap_sample_every
+            },
+            'homography_telemetry': homography_telemetry,
+            'homography_settings': {
+                'max_inertia_frames': homography_manager.max_inertia_frames,
+                'disable_inertia': bool(disable_inertia)
             }
         }
 
