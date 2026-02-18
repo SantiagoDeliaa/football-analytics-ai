@@ -138,6 +138,9 @@ enable_possession = st.sidebar.checkbox("Habilitar Análisis de Posesión", valu
 disable_inertia = st.sidebar.checkbox("Modo NO INERCIA (A/B)", value=False,
                                       help="No reutiliza homografía entre frames (max_inertia_frames=0)")
 
+max_inertia = st.sidebar.slider("Max Inertia Frames", 0, 60, 30,
+                                 help="0 = sin inercia (A/B test)")
+
 pitch_model = None
 full_field_approx = False
 
@@ -254,7 +257,7 @@ if uploaded_video:
                         full_field_approx=full_field_approx,
                         progress_callback=_on_progress,
                         enable_possession=enable_possession,
-                        disable_inertia=disable_inertia
+                        max_inertia_frames=0 if disable_inertia else max_inertia
                     )
 
                     progress_bar.progress(90)

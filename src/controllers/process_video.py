@@ -535,7 +535,7 @@ def process_video(
     full_field_approx: bool = False,
     progress_callback=None,
     enable_possession: bool = False,
-    disable_inertia: bool = False
+    max_inertia_frames: int = 30
 ):
     """
     Procesa video completo con detección y tracking mejorado usando múltiples modelos.
@@ -597,9 +597,7 @@ def process_video(
 
         # Crear configuración con el tipo correcto
         pitch_config = SoccerPitchConfiguration(model_type=pitch_model_type)
-        homography_manager = HomographyManager()
-        if disable_inertia:
-            homography_manager.max_inertia_frames = 0
+        homography_manager = HomographyManager(max_inertia_frames=max_inertia_frames)
 
     # Mejora J: Anotadores estilo broadcast (elipse + trace)
     team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
@@ -643,6 +641,9 @@ def process_video(
     heatmap_samples_count = 0
     debug_scouting = False
     _heatmap_valid_frame_counter = 0
+    # M1: OOB tracking
+    _oob_pct_sum = 0.0
+    _oob_pct_count = 0
     homography_telemetry = {
         'frame_number': [],
         'homography_mode': [],
@@ -1258,6 +1259,20 @@ def process_video(
                                 _possession_assigned_metric = True
                             annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
+                        # --- M1: TELEMETRÍA OOB ---
+                        _all_field_pts = []
+                        for _tk in ('team1', 'team2'):
+                            if _tk in points_to_transform and len(points_to_transform[_tk]) > 0:
+                                _all_field_pts.append(points_to_transform[_tk])
+                        if _all_field_pts:
+                            _all_pts = np.concatenate(_all_field_pts, axis=0)
+                            _oob = np.sum(
+                                (_all_pts[:, 0] < 0) | (_all_pts[:, 0] > 105) |
+                                (_all_pts[:, 1] < 0) | (_all_pts[:, 1] > 68)
+                            )
+                            _oob_pct_sum += float(_oob) / max(len(_all_pts), 1)
+                            _oob_pct_count += 1
+
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
                         # Fix D: auto-detectar dirección de ataque por centroide
                         t1_dir = "right"
@@ -1288,11 +1303,11 @@ def process_video(
                             team2_tracker.update(metrics2, frame_count)
                         
                         _heatmap_valid_frame_counter += 1
-                        last_reproj = getattr(homography_manager, 'last_reproj_error', None)
-                        allow_heatmap = homography_mode == "tracking"
-                        if not allow_heatmap and homography_mode == "inertia":
-                            allow_heatmap = last_reproj is not None and last_reproj < homography_manager.max_reproj_error
-                        if allow_heatmap and _heatmap_valid_frame_counter % heatmap_sample_every == 0:
+                        # M2: Heatmap gating - skip FULLSCREEN and stale inertia
+                        _h_mode = homography_manager.last_state
+                        _heatmap_mode_ok = _h_mode in ("UPDATED_EMA", "UPDATED_SWITCH") or \
+                                           (_h_mode == "REUSED_INERTIA" and homography_manager.frames_since_valid <= 5)
+                        if _heatmap_valid_frame_counter % heatmap_sample_every == 0 and _heatmap_mode_ok:
                             sampled = False
                             if 'team1' in points_to_transform and len(points_to_transform['team1']) >= 6:
                                 sampled = True
@@ -1436,6 +1451,10 @@ def process_video(
                     homography_telemetry['team1_percent_out_of_bounds'].append(None)
                     homography_telemetry['team2_percent_out_of_bounds'].append(None)
 
+            # M1: Record telemetry per frame
+            if pitch_config:
+                homography_manager.record_telemetry()
+
             # Fallback: posesión píxeles si no se pudo hacer métrico
             if possession_tracker is not None and pitch_config and not _possession_assigned_metric:
                 possession_tracker.assign_possession(
@@ -1447,23 +1466,30 @@ def process_video(
                 state = getattr(homography_manager, 'last_state', "")
                 text = None
                 color = (0, 255, 0)
+                # M1: include reproj_error in HUD
+                _reproj_str = ""
+                if homography_manager._last_reproj_error is not None:
+                    _reproj_str = f" err={homography_manager._last_reproj_error:.2f}"
                 if state.startswith("UPDATED"):
                     if state == "UPDATED_EMA":
-                        text = "Homografia: UPDATED (EMA)"
+                        text = f"H: EMA{_reproj_str}"
                     elif state == "UPDATED_SWITCH":
-                        text = "Homografia: UPDATED (SWITCH)"
+                        text = f"H: SWITCH{_reproj_str}"
                     else:
-                        text = "Homografia: UPDATED"
+                        text = f"H: UPDATED{_reproj_str}"
                     color = (0, 255, 0)
                 elif state == "REUSED_INERTIA":
-                    text = f"Homografia: INERCIA ({homography_manager.frames_since_valid}/{homography_manager.max_inertia_frames})"
+                    text = f"H: INERCIA ({homography_manager.frames_since_valid}/{homography_manager.max_inertia_frames}){_reproj_str}"
                     color = (0, 255, 255)
                 elif state == "FULLSCREEN":
-                    text = "Homografia: FULLSCREEN"
+                    text = "H: FULLSCREEN"
+                    color = (0, 0, 255)
+                elif state == "INVALID_SANITY":
+                    text = f"H: INVALID_SANITY{_reproj_str}"
                     color = (0, 0, 255)
                 else:
                     if pitch_config and transformer is None:
-                        text = "Homografia: NO_H"
+                        text = f"H: NO_H ({state})"
                         color = (0, 0, 255)
                 if text is not None:
                     cv2.putText(
@@ -1516,6 +1542,13 @@ def process_video(
         heatmap_list_team1 = h1_down.tolist()
         heatmap_list_team2 = h2_down.tolist()
 
+        # M1: Telemetry summary
+        _h_telemetry_summary = {}
+        if pitch_config:
+            _h_telemetry_summary = homography_manager.get_telemetry_summary()
+            _h_telemetry_summary['avg_oob_pct'] = (_oob_pct_sum / max(_oob_pct_count, 1))
+            _h_telemetry_summary['per_frame'] = homography_manager.telemetry
+
         stats_data = {
             'total_frames': frame_count,
             'duration_seconds': frame_count / fps if fps > 0 else 0,
@@ -1546,10 +1579,12 @@ def process_video(
                 'total_samples': heatmap_samples_count,
                 'sample_rate': heatmap_sample_every
             },
-            'homography_telemetry': homography_telemetry,
+            'homography_telemetry': {
+                **_h_telemetry_summary,
+                'timeline': homography_telemetry,
+            },
             'homography_settings': {
                 'max_inertia_frames': homography_manager.max_inertia_frames,
-                'disable_inertia': bool(disable_inertia)
             }
         }
 
