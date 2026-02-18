@@ -606,6 +606,16 @@ def process_video(
             debug=False,
         )
 
+    homography_manager = None
+    if pitch_config:
+        homography_manager = HomographyManager(
+            spread_threshold=0.30,
+            max_inertia_frames=30,
+            alpha=0.15,
+            min_points=4,
+            debug=False,
+        )
+
     # Anotadores
     team1_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
     team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
