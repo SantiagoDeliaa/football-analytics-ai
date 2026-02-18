@@ -26,6 +26,8 @@ class HomographyManager:
         self.switch_after_frames = switch_after_frames
         self.debug = debug
         self.last_state: str = ""
+        self.last_reproj_error: Optional[float] = None
+        self.last_delta: Optional[float] = None
 
     def _normalize(self, H: np.ndarray) -> np.ndarray:
         d = H[2, 2]
@@ -57,6 +59,8 @@ class HomographyManager:
         confidences: Optional[np.ndarray] = None,
         frame_size: Optional[Tuple[int, int]] = None
     ) -> bool:
+        self.last_reproj_error = None
+        self.last_delta = None
         if source_points is None or target_points is None:
             self.frames_since_valid += 1
             return False
@@ -113,6 +117,7 @@ class HomographyManager:
             weights = conf_in
 
         err = self._mean_reproj_error(H_new, sp_in, tp_in, weights)
+        self.last_reproj_error = float(err)
         if err > self.max_reproj_error:
             self.frames_since_valid += 1
             self.last_state = "INVALID_REPROJ"
@@ -130,6 +135,7 @@ class HomographyManager:
         Hn_cur = self.current_H
         denom = np.linalg.norm(Hn_cur) + 1e-8
         delta = float(np.linalg.norm(Hn_new - Hn_cur) / denom)
+        self.last_delta = float(delta)
         if delta < self.delta_matrix_thresh:
             Hn_smooth = self.alpha * Hn_new + (1.0 - self.alpha) * Hn_cur
             self.current_H = self._normalize(Hn_smooth)

@@ -135,6 +135,8 @@ enable_analytics = st.sidebar.checkbox("Habilitar Análisis Táctico", value=Tru
                                        help="Calcula formaciones y métricas tácticas")
 enable_possession = st.sidebar.checkbox("Habilitar Análisis de Posesión", value=False,
                                         help="Posesión de pelota, velocidad y distancia por jugador")
+disable_inertia = st.sidebar.checkbox("Modo NO INERCIA (A/B)", value=False,
+                                      help="No reutiliza homografía entre frames (max_inertia_frames=0)")
 
 pitch_model = None
 full_field_approx = False
@@ -251,7 +253,8 @@ if uploaded_video:
                         img_size=512,
                         full_field_approx=full_field_approx,
                         progress_callback=_on_progress,
-                        enable_possession=enable_possession
+                        enable_possession=enable_possession,
+                        disable_inertia=disable_inertia
                     )
 
                     progress_bar.progress(90)
