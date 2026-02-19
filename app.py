@@ -15,6 +15,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import cv2
+from io import BytesIO
+from datetime import datetime
+import matplotlib.pyplot as plt
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Table, TableStyle
+from reportlab.lib import colors
 
 def draw_pitch_base(width_px: int, height_px: int) -> np.ndarray:
     pitch = np.zeros((height_px, width_px, 3), dtype=np.uint8)
@@ -77,6 +85,310 @@ def format_mmss(seconds: float) -> str:
     minutes = int(seconds) // 60
     sec = int(seconds) % 60
     return f"{minutes:02d}:{sec:02d}"
+
+def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: bool = False, flip_vertical: bool = True) -> bytes:
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    page_w, page_h = A4
+    left = 40
+    right = page_w - 40
+    y = page_h - 40
+
+    def new_page():
+        nonlocal y
+        c.showPage()
+        y = page_h - 40
+
+    def draw_text(text: str, size: int = 12, leading: int = 16):
+        nonlocal y
+        if y < 70:
+            new_page()
+        c.setFont("Helvetica", size)
+        c.drawString(left, y, text)
+        y -= leading
+
+    def draw_bullet(text: str, size: int = 11, leading: int = 14):
+        draw_text(f"• {text}", size, leading)
+
+    def draw_section(title: str):
+        nonlocal y
+        if y < 90:
+            new_page()
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(left, y, title)
+        y -= 18
+
+    def draw_table(data):
+        nonlocal y
+        table = Table(data, colWidths=[150, 130, 70, 130, 70])
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("ALIGN", (1, 0), (-1, -1), "CENTER"),
+        ]))
+        w, h = table.wrap(0, 0)
+        if y - h < 70:
+            new_page()
+        table.drawOn(c, left, y - h)
+        y -= h + 16
+
+    def draw_image(image_bytes: BytesIO, max_w: float, max_h: float):
+        nonlocal y
+        image_bytes.seek(0)
+        img = ImageReader(image_bytes)
+        iw, ih = img.getSize()
+        scale = min(max_w / iw, max_h / ih)
+        w = iw * scale
+        h = ih * scale
+        if y - h < 70:
+            new_page()
+        c.drawImage(img, left, y - h, width=w, height=h)
+        y -= h + 16
+
+    total_frames = stats_data.get("total_frames", None)
+    duration_seconds = stats_data.get("duration_seconds", None)
+    timeline = stats_data.get("timeline", {})
+    metrics = stats_data.get("metrics", {})
+    heatmap_meta = stats_data.get("scouting_heatmaps", {})
+
+    def get_valid_frames(team_key: str) -> int:
+        team_metrics = metrics.get(team_key, {})
+        valid_frames = team_metrics.get("valid_frames", None)
+        if valid_frames is None:
+            valid_frames = len(timeline.get(team_key, {}).get("frame_number", []))
+        return valid_frames
+
+    def compute_confidence(team_key: str):
+        valid_frames = get_valid_frames(team_key)
+        if total_frames and total_frames > 0:
+            ratio = max(0.0, min(1.0, valid_frames / total_frames))
+            if ratio >= 0.70:
+                return "Alta", ratio
+            if ratio >= 0.40:
+                return "Media", ratio
+            return "Baja", ratio
+        return "No disponible", None
+
+    def build_summary(team_key: str, confidence_level: str) -> list:
+        team_metrics = metrics.get(team_key, {})
+        depth_mean = team_metrics.get("block_depth_m", {}).get("mean", None)
+        width_mean = team_metrics.get("block_width_m", {}).get("mean", None)
+        left_mean = team_metrics.get("def_line_left_m", {}).get("mean", None)
+        right_mean = team_metrics.get("def_line_right_m", {}).get("mean", None)
+        if depth_mean is None or width_mean is None or left_mean is None or right_mean is None:
+            return ["No hay suficientes datos"]
+        bullets = []
+        strong = confidence_level != "Baja"
+        if depth_mean > 40:
+            bullets.append("Equipo muy largo (transición)" if strong else "Sugiere equipo muy largo (transición)")
+        elif depth_mean < 30:
+            bullets.append("Bloque compacto en profundidad" if strong else "Podría indicar bloque compacto")
+        if width_mean > 35:
+            bullets.append("Equipo abierto en amplitud" if strong else "Sugiere equipo abierto")
+        elif width_mean < 25:
+            bullets.append("Equipo cerrado en amplitud" if strong else "Podría indicar equipo cerrado")
+        line_avg = (left_mean + right_mean) / 2.0
+        if line_avg >= 70:
+            bullets.append("Línea defensiva alta" if strong else "Sugiere línea defensiva alta")
+        elif line_avg >= 50:
+            bullets.append("Bloque medio" if strong else "Podría indicar bloque medio")
+        else:
+            bullets.append("Bloque bajo" if strong else "Podría indicar bloque bajo")
+        if duration_seconds:
+            bullets.append(f"Duración del clip: {duration_seconds:.1f}s")
+        return bullets
+
+    c.setFont("Helvetica-Bold", 20)
+    c.drawCentredString(page_w / 2, y, "Reporte Scouting — Análisis post-partido")
+    y -= 26
+    c.setFont("Helvetica", 11)
+    c.drawCentredString(page_w / 2, y, datetime.now().strftime("%Y-%m-%d %H:%M"))
+    y -= 22
+    draw_text(f"Duración (s): {duration_seconds:.1f}" if duration_seconds is not None else "Duración (s): No disponible")
+    draw_text(f"Total frames: {total_frames}" if total_frames is not None else "Total frames: No disponible")
+    draw_text(f"Video: {video_name}" if video_name else "Video: No disponible")
+    y -= 6
+
+    draw_section("Resumen Ejecutivo")
+    level1, ratio1 = compute_confidence("team1")
+    level2, ratio2 = compute_confidence("team2")
+    draw_text("Team 1", size=12, leading=14)
+    if ratio1 is not None:
+        draw_text(f"Confianza: {level1} ({ratio1 * 100:.0f}%)", size=11, leading=14)
+    else:
+        draw_text(f"Confianza: {level1}", size=11, leading=14)
+    for item in build_summary("team1", level1):
+        draw_bullet(item)
+    y -= 4
+    draw_text("Team 2", size=12, leading=14)
+    if ratio2 is not None:
+        draw_text(f"Confianza: {level2} ({ratio2 * 100:.0f}%)", size=11, leading=14)
+    else:
+        draw_text(f"Confianza: {level2}", size=11, leading=14)
+    for item in build_summary("team2", level2):
+        draw_bullet(item)
+    y -= 4
+
+    homography_telemetry = stats_data.get("homography_telemetry", {})
+    modes = homography_telemetry.get("homography_mode", [])
+    has_inertia = any(m == "inertia" for m in modes)
+    has_fallback = any(m == "fallback" for m in modes)
+    quality_notes = []
+    if has_inertia:
+        quality_notes.append("Se detectó inercia en homografía")
+    if has_fallback:
+        quality_notes.append("Se detectó fallback de homografía")
+    if level1 == "Baja" or level2 == "Baja":
+        quality_notes.append("⚠ Datos limitados")
+    if quality_notes:
+        draw_text("Notas de calidad:", size=11, leading=14)
+        for note in quality_notes:
+            draw_bullet(note)
+
+    draw_section("Métricas agregadas")
+    def metric_cell(team_metrics: dict, key: str, field: str):
+        value = team_metrics.get(key, {}).get(field, None)
+        if value is None:
+            return "No disponible"
+        return f"{value:.1f}"
+
+    def metric_minmax(team_metrics: dict, key: str):
+        min_v = team_metrics.get(key, {}).get("min", None)
+        max_v = team_metrics.get(key, {}).get("max", None)
+        if min_v is None or max_v is None:
+            return "No disponible"
+        return f"{min_v:.1f}–{max_v:.1f}"
+
+    team1_metrics = metrics.get("team1", {})
+    team2_metrics = metrics.get("team2", {})
+    table_data = [["Métrica", "Team 1 (mean/min–max)", "Valid", "Team 2 (mean/min–max)", "Valid"]]
+    metric_list = [
+        ("block_depth_m", "Profundidad bloque (m)"),
+        ("block_width_m", "Ancho bloque (m)"),
+        ("block_area_m2", "Área bloque (m²)"),
+        ("def_line_left_m", "Línea def izq (m)"),
+        ("def_line_right_m", "Línea def der (m)"),
+        ("compactness", "Compactación (m²)"),
+        ("pressure_height", "Altura presión (m)"),
+        ("offensive_width", "Amplitud ofensiva (m)"),
+        ("defensive_depth", "Profundidad defensiva (m)")
+    ]
+    for key, label in metric_list:
+        t1_mean = metric_cell(team1_metrics, key, "mean")
+        t1_minmax = metric_minmax(team1_metrics, key)
+        t2_mean = metric_cell(team2_metrics, key, "mean")
+        t2_minmax = metric_minmax(team2_metrics, key)
+        t1_val = f"{t1_mean} / {t1_minmax}" if t1_mean != "No disponible" or t1_minmax != "No disponible" else "No disponible"
+        t2_val = f"{t2_mean} / {t2_minmax}" if t2_mean != "No disponible" or t2_minmax != "No disponible" else "No disponible"
+        table_data.append([label, t1_val, str(get_valid_frames("team1")), t2_val, str(get_valid_frames("team2"))])
+    draw_table(table_data)
+
+    draw_section("Gráficos")
+    def chart_compactation():
+        frames1 = timeline.get("team1", {}).get("frame_number", [])
+        frames2 = timeline.get("team2", {}).get("frame_number", [])
+        depth1 = timeline.get("team1", {}).get("block_depth_m", [])
+        width1 = timeline.get("team1", {}).get("block_width_m", [])
+        depth2 = timeline.get("team2", {}).get("block_depth_m", [])
+        width2 = timeline.get("team2", {}).get("block_width_m", [])
+        fig, ax = plt.subplots(figsize=(6.6, 3.2), dpi=120)
+        if frames1 and depth1:
+            ax.plot(frames1, depth1, color="green", label="T1 Profundidad")
+        if frames1 and width1:
+            ax.plot(frames1, width1, color="darkgreen", label="T1 Ancho")
+        if frames2 and depth2:
+            ax.plot(frames2, depth2, color="blue", label="T2 Profundidad")
+        if frames2 and width2:
+            ax.plot(frames2, width2, color="navy", label="T2 Ancho")
+        ax.set_title("Compactación (profundidad/ancho)")
+        ax.set_xlabel("Frame")
+        ax.set_ylabel("Metros")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+
+    def chart_def_line():
+        frames1 = timeline.get("team1", {}).get("frame_number", [])
+        frames2 = timeline.get("team2", {}).get("frame_number", [])
+        left1 = timeline.get("team1", {}).get("def_line_left_m", [])
+        right1 = timeline.get("team1", {}).get("def_line_right_m", [])
+        left2 = timeline.get("team2", {}).get("def_line_left_m", [])
+        right2 = timeline.get("team2", {}).get("def_line_right_m", [])
+        fig, ax = plt.subplots(figsize=(6.6, 3.2), dpi=120)
+        if frames1 and left1:
+            ax.plot(frames1, left1, color="green", label="T1 Línea Izq")
+        if frames1 and right1:
+            ax.plot(frames1, right1, color="darkgreen", label="T1 Línea Der")
+        if frames2 and left2:
+            ax.plot(frames2, left2, color="blue", label="T2 Línea Izq")
+        if frames2 and right2:
+            ax.plot(frames2, right2, color="navy", label="T2 Línea Der")
+        ax.set_title("Línea defensiva")
+        ax.set_xlabel("Frame")
+        ax.set_ylabel("Metros")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+
+    def heatmap_image(team_key: str):
+        h = heatmap_meta.get(team_key, None)
+        if h is None:
+            return None
+        heatmap = np.array(h, dtype=np.float32)
+        out_w = 840
+        out_h = int(out_w * 68 / 105)
+        legend = draw_heatmap_legend(out_h)
+        rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+        combo = np.concatenate([rendered, legend], axis=1)
+        ok, buf = cv2.imencode(".png", combo)
+        if not ok:
+            return None
+        return BytesIO(buf.tobytes())
+
+    if timeline:
+        draw_image(chart_compactation(), right - left, 220)
+        draw_image(chart_def_line(), right - left, 220)
+    else:
+        draw_text("Gráficos: No disponible")
+
+    hm1 = heatmap_image("team1")
+    hm2 = heatmap_image("team2")
+    if hm1:
+        draw_text("Heatmap Team 1", size=11, leading=14)
+        draw_image(hm1, right - left, 250)
+    else:
+        draw_text("Heatmap Team 1: No disponible", size=11, leading=14)
+    if hm2:
+        draw_text("Heatmap Team 2", size=11, leading=14)
+        draw_image(hm2, right - left, 250)
+    else:
+        draw_text("Heatmap Team 2: No disponible", size=11, leading=14)
+
+    draw_section("Notas de Interpretación")
+    draw_bullet("Compactación: tamaño del bloque del equipo (profundidad y ancho)")
+    draw_bullet("Línea defensiva: altura del último bloque en metros (0–105)")
+    draw_bullet("Heatmap: intensidad de presencia relativa en el clip")
+    if use_log:
+        draw_bullet("Escala log: muestra zonas con poca presencia cuando hay una dominante")
+    else:
+        draw_bullet("Escala log: no aplicada en este reporte")
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_sidebar_state="expanded")
 
@@ -457,6 +769,21 @@ if uploaded_video:
                             mime="text/csv"
                         )
 
+            st.divider()
+            st.markdown("### PDF")
+            pdf_bytes = generate_scouting_pdf(
+                st.session_state.stats,
+                uploaded_video.name if uploaded_video else None,
+                use_log=st.session_state.get("heatmap_use_log", False),
+                flip_vertical=st.session_state.get("heatmap_flip_vertical", True)
+            )
+            st.download_button(
+                label="📄 Exportar PDF",
+                data=pdf_bytes,
+                file_name="reporte_scouting.pdf",
+                mime="application/pdf"
+            )
+
         else:
             st.info("💾 Las opciones de exportación aparecerán aquí después de procesar el video")
 
@@ -643,6 +970,8 @@ if uploaded_video:
             st.subheader("Heatmaps")
             flip_vertical = st.checkbox("Invertir eje vertical (Y)", value=True)
             use_log = st.checkbox("Usar escala logarítmica", value=False)
+            st.session_state["heatmap_flip_vertical"] = flip_vertical
+            st.session_state["heatmap_use_log"] = use_log
             st.caption("Escala log: hace visibles zonas con poca presencia cuando hay una zona dominante.")
             col_h1, col_h2 = st.columns(2)
             heatmap_meta = stats.get('scouting_heatmaps', {})
