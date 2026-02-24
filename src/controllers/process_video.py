@@ -659,6 +659,7 @@ def process_video(
         'homography_mode': [],
         'reproj_error': [],
         'delta_H': [],
+        'inlier_ratio': [],
         'team1_centroid_x': [],
         'team1_centroid_y': [],
         'team2_centroid_x': [],
@@ -1107,6 +1108,8 @@ def process_video(
                                 target_points = pitch_config.get_keypoints_from_ids(valid_indices)
                                 valid_confidences = keypoints_conf[valid_kp_mask][mapped_indices_mask]
                                 homography_manager.update(valid_keypoints, target_points, valid_confidences, (width, height))
+                                if homography_manager.cut_detected:
+                                    homography_manager.start_reacquire()
                                 transformer = homography_manager.get_transformer()
                     except Exception as e:
                         if frame_count % 100 == 0:
@@ -1138,17 +1141,21 @@ def process_video(
 
                     transformer = ViewTransformer(source_points, target_points)
                     homography_manager.last_state = "FULLSCREEN"
+                    homography_manager.mode = "FALLBACK"
                     if frame_count % 100 == 0:
                         print("fallback full-screen")
 
                 # Si tenemos un transformer válido, proyectamos y dibujamos
                 homography_state = getattr(homography_manager, 'last_state', "")
-                if transformer is None:
-                    homography_mode = "fallback"
-                elif homography_state.startswith("UPDATED"):
+                hm_mode = getattr(homography_manager, 'mode', "fallback")
+                if hm_mode == "ACQUIRE":
+                    homography_mode = "acquire"
+                elif hm_mode == "TRACK":
                     homography_mode = "tracking"
-                elif homography_state == "REUSED_INERTIA":
+                elif hm_mode == "INERTIA":
                     homography_mode = "inertia"
+                elif hm_mode == "REACQUIRE":
+                    homography_mode = "reacquire"
                 else:
                     homography_mode = "fallback"
                 if homography_state:
@@ -1343,6 +1350,7 @@ def process_video(
                         homography_telemetry['homography_mode'].append(homography_mode)
                         homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
                         homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                        homography_telemetry['inlier_ratio'].append(getattr(homography_manager, 'last_inlier_ratio', None))
                         homography_telemetry['team1_centroid_x'].append(team1_centroid[0] if team1_centroid else None)
                         homography_telemetry['team1_centroid_y'].append(team1_centroid[1] if team1_centroid else None)
                         homography_telemetry['team2_centroid_x'].append(team2_centroid[0] if team2_centroid else None)
@@ -1449,12 +1457,16 @@ def process_video(
                     homography_telemetry['homography_mode'].append(homography_mode)
                     homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
                     homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                    homography_telemetry['inlier_ratio'].append(getattr(homography_manager, 'last_inlier_ratio', None))
                     homography_telemetry['team1_centroid_x'].append(None)
                     homography_telemetry['team1_centroid_y'].append(None)
                     homography_telemetry['team2_centroid_x'].append(None)
                     homography_telemetry['team2_centroid_y'].append(None)
                     homography_telemetry['team1_percent_out_of_bounds'].append(None)
                     homography_telemetry['team2_percent_out_of_bounds'].append(None)
+
+                if getattr(homography_manager, 'mode', "") == "REACQUIRE":
+                    homography_manager.tick_reacquire()
 
             current_ids = set()
             if len(tracked_persons) > 0 and tracked_persons.tracker_id is not None:
@@ -1488,7 +1500,7 @@ def process_video(
                 hs = "fallback"
             elif (reproj_error_m is not None and reproj_error_m > REPROJ_OK_MAX) or (delta_H is not None and delta_H > DELTA_H_WARN):
                 hs = "warn"
-            cut_detected = bool(delta_H is not None and delta_H > DELTA_H_CUT)
+            cut_detected = bool(getattr(homography_manager, 'cut_detected', False))
 
             formation_label = None
             formation_valid = True
@@ -1538,6 +1550,7 @@ def process_video(
                 'avg_track_age': avg_track_age,
                 'short_tracks_ratio': short_tracks_ratio,
                 'frame_valid_for_metrics': frame_valid,
+                'ransac_inlier_ratio': getattr(homography_manager, 'last_inlier_ratio', None),
                 'formation_label': formation_label,
                 'formation_valid': bool(formation_valid),
                 'formation_invalid_reason': formation_invalid_reason
