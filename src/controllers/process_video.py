@@ -11,6 +11,15 @@ from src.utils.homography_manager import HomographyManager
 from src.utils.radar import SoccerPitchConfiguration, draw_radar_view, draw_radar_with_metrics
 from src.controllers.formation_detector import FormationDetector
 from src.controllers.tactical_metrics import TacticalMetricsCalculator, TacticalMetricsTracker
+from src.utils.quality_config import (
+    REPROJ_OK_MAX,
+    REPROJ_INVALID,
+    DELTA_H_WARN,
+    DELTA_H_CUT,
+    MIN_TRACKS_ACTIVE,
+    MIN_DETECTIONS,
+    SHORT_TRACK_AGE,
+)
 from ultralytics import YOLO
 
 
@@ -657,6 +666,9 @@ def process_video(
         'team1_percent_out_of_bounds': [],
         'team2_percent_out_of_bounds': []
     }
+    health_timeline = []
+    track_age = {}
+    frame_valid_flags = []
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1444,6 +1456,92 @@ def process_video(
                     homography_telemetry['team1_percent_out_of_bounds'].append(None)
                     homography_telemetry['team2_percent_out_of_bounds'].append(None)
 
+            current_ids = set()
+            if len(tracked_persons) > 0 and tracked_persons.tracker_id is not None:
+                for tid in tracked_persons.tracker_id.tolist():
+                    current_ids.add(int(tid))
+            for tid in list(track_age.keys()):
+                if tid not in current_ids:
+                    del track_age[tid]
+            for tid in current_ids:
+                track_age[tid] = track_age.get(tid, 0) + 1
+
+            detections_count = int(len(player_detections)) if player_detections is not None else 0
+            tracks_active = int(len(track_age))
+            avg_track_age = float(np.mean(list(track_age.values()))) if tracks_active > 0 else 0.0
+            short_tracks = int(np.sum([1 for a in track_age.values() if a < SHORT_TRACK_AGE]))
+            short_tracks_ratio = float(short_tracks / tracks_active) if tracks_active > 0 else 0.0
+
+            reproj_error_m = getattr(homography_manager, 'last_reproj_error', None)
+            delta_H = getattr(homography_manager, 'last_delta', None)
+            hm = homography_mode
+            hs = "ok"
+            reproj_is_nan = False
+            if reproj_error_m is not None:
+                try:
+                    reproj_is_nan = bool(np.isnan(reproj_error_m))
+                except Exception:
+                    reproj_is_nan = False
+            if reproj_error_m is None or reproj_is_nan or (reproj_error_m is not None and reproj_error_m > REPROJ_INVALID):
+                hs = "invalid"
+            elif hm == "fallback":
+                hs = "fallback"
+            elif (reproj_error_m is not None and reproj_error_m > REPROJ_OK_MAX) or (delta_H is not None and delta_H > DELTA_H_WARN):
+                hs = "warn"
+            cut_detected = bool(delta_H is not None and delta_H > DELTA_H_CUT)
+
+            formation_label = None
+            formation_valid = True
+            formation_invalid_reason = None
+            if formations_timeline['team1'] or formations_timeline['team2']:
+                t1_form = formations_timeline['team1'][-1] if formations_timeline['team1'] else None
+                t2_form = formations_timeline['team2'][-1] if formations_timeline['team2'] else None
+                t1_label = t1_form.get('formation') if isinstance(t1_form, dict) else None
+                t2_label = t2_form.get('formation') if isinstance(t2_form, dict) else None
+                formation_label = f"{t1_label or 'N/A'} | {t2_label or 'N/A'}"
+                reasons = []
+                flags = []
+                for form in (t1_form, t2_form):
+                    if isinstance(form, dict):
+                        ppl = form.get('players_per_line')
+                        total = form.get('total_players')
+                        if isinstance(ppl, list) and total is not None:
+                            s = sum(ppl)
+                            d = ppl[0] if len(ppl) > 0 else 0
+                            a = ppl[2] if len(ppl) > 2 else 0
+                            valid = (s == 10) and (d >= 2) and (a <= 4)
+                            flags.append(valid)
+                            if not valid:
+                                if s != 10:
+                                    reasons.append("sum_not_10")
+                                if d < 2:
+                                    reasons.append("no_defenders")
+                                if a > 4:
+                                    reasons.append("too_many_attackers")
+                if flags:
+                    formation_valid = all(flags)
+                if reasons:
+                    formation_invalid_reason = ",".join(sorted(set(reasons)))
+
+            frame_valid = bool(hs == "ok" and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
+            frame_valid_flags.append(frame_valid)
+
+            health_timeline.append({
+                'frame_idx': int(frame_count),
+                'homography_mode': str(hm),
+                'reproj_error_m': None if reproj_error_m is None else float(reproj_error_m),
+                'delta_H': None if delta_H is None else float(delta_H),
+                'homography_status': hs,
+                'cut_detected': cut_detected,
+                'detections_count': detections_count,
+                'tracks_active': tracks_active,
+                'avg_track_age': avg_track_age,
+                'short_tracks_ratio': short_tracks_ratio,
+                'frame_valid_for_metrics': frame_valid,
+                'formation_label': formation_label,
+                'formation_valid': bool(formation_valid),
+                'formation_invalid_reason': formation_invalid_reason
+            })
             if qc_sample_every > 0 and frame_count % qc_sample_every == 0:
                 frame_qc_samples.append({
                     'frame': frame_count,
@@ -1626,8 +1724,9 @@ def process_video(
                 return "Medium"
             return "Low"
 
-        team1_valid_ratio = float(team1_tracker.valid_frames_count / frame_count) if frame_count > 0 else 0.0
-        team2_valid_ratio = float(team2_tracker.valid_frames_count / frame_count) if frame_count > 0 else 0.0
+        valid_frames_recalc = int(np.sum([1 for v in frame_valid_flags if v]))
+        team1_valid_ratio = float(valid_frames_recalc / frame_count) if frame_count > 0 else 0.0
+        team2_valid_ratio = float(valid_frames_recalc / frame_count) if frame_count > 0 else 0.0
         confidence_grade_team1 = _grade(team1_valid_ratio, homography_valid_ratio)
         confidence_grade_team2 = _grade(team2_valid_ratio, homography_valid_ratio)
 
@@ -1648,6 +1747,27 @@ def process_video(
         if any(jitter_flags):
             warnings.append("Excessive jitter")
 
+        def _safe_p95(values):
+            vals = [v for v in values if v is not None]
+            if len(vals) == 0:
+                return None
+            arr = np.array(vals, dtype=np.float32)
+            return float(np.percentile(arr, 95))
+
+        invalid_frames = int(np.sum([1 for h in health_timeline if h.get('homography_status') == 'invalid']))
+        warn_frames = int(np.sum([1 for h in health_timeline if h.get('homography_status') == 'warn']))
+        fallback_frames = int(np.sum([1 for h in health_timeline if h.get('homography_status') == 'fallback']))
+        invalid_formation_frames = int(np.sum([1 for h in health_timeline if not h.get('formation_valid')]))
+        avg_tracks_active = _safe_mean([h.get('tracks_active') for h in health_timeline])
+        avg_short_tracks_ratio = _safe_mean([h.get('short_tracks_ratio') for h in health_timeline])
+        p95_reproj_error_m = _safe_p95(homography_telemetry['reproj_error'])
+        p95_delta_H = _safe_p95(homography_telemetry['delta_H'])
+        invalid_ratio = float(invalid_frames / frame_count) if frame_count > 0 else 0.0
+        warn_ratio = float(warn_frames / frame_count) if frame_count > 0 else 0.0
+        fallback_ratio_health = float(fallback_frames / frame_count) if frame_count > 0 else 0.0
+        invalid_formation_ratio = float(invalid_formation_frames / frame_count) if frame_count > 0 else 0.0
+        team1_stats['valid_frames'] = valid_frames_recalc
+        team2_stats['valid_frames'] = valid_frames_recalc
         stats_data = {
             'total_frames': frame_count,
             'duration_seconds': frame_count / fps if fps > 0 else 0,
@@ -1668,7 +1788,8 @@ def process_video(
             },
             'timeline': {
                 'team1': team1_tracker.export_to_dict(),
-                'team2': team2_tracker.export_to_dict()
+                'team2': team2_tracker.export_to_dict(),
+                'health': health_timeline
             },
             'scouting_heatmaps': {
                 'team1': heatmap_list_team1,
@@ -1721,6 +1842,20 @@ def process_video(
                 'confidence_grade_team1': confidence_grade_team1,
                 'confidence_grade_team2': confidence_grade_team2,
                 'warnings': warnings
+            },
+            'health_summary': {
+                'total_frames': frame_count,
+                'valid_frames': valid_frames_recalc,
+                'invalid_ratio': invalid_ratio,
+                'fallback_ratio': fallback_ratio_health,
+                'warn_ratio': warn_ratio,
+                'avg_reproj_error_m': avg_reproj_error,
+                'p95_reproj_error_m': p95_reproj_error_m,
+                'avg_delta_H': avg_delta_H,
+                'p95_delta_H': p95_delta_H,
+                'avg_tracks_active': avg_tracks_active,
+                'avg_short_tracks_ratio': avg_short_tracks_ratio,
+                'invalid_formation_ratio': invalid_formation_ratio
             },
             'frame_qc_samples': frame_qc_samples
         }

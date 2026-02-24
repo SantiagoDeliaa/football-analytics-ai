@@ -112,18 +112,13 @@ class TacticalMetricsCalculator:
         """
         Calcula la altura de presión del equipo.
 
-        Presión = Posición X promedio de los jugadores
-
-        Valores altos = Presión alta (cerca del arco rival)
-        Valores bajos = Presión baja (cerca del arco propio)
-
         Returns:
-            Posición X promedio en metros (0-105)
+            Posición X percentil 85 en metros (0-105)
         """
         if len(positions) == 0:
             return 0.0
 
-        return float(np.mean(positions[:, 0]))
+        return float(np.percentile(positions[:, 0], 85))
 
     def calculate_offensive_width(self, positions: np.ndarray) -> float:
         """
