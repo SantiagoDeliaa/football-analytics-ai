@@ -154,24 +154,40 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     timeline = stats_data.get("timeline", {})
     metrics = stats_data.get("metrics", {})
     heatmap_meta = stats_data.get("scouting_heatmaps", {})
+    health_summary = stats_data.get("health_summary", {})
 
     def get_valid_frames(team_key: str) -> int:
         team_metrics = metrics.get(team_key, {})
         valid_frames = team_metrics.get("valid_frames", None)
         if valid_frames is None:
+            valid_frames = health_summary.get("valid_frames", None)
+        if valid_frames is None:
             valid_frames = len(timeline.get(team_key, {}).get("frame_number", []))
         return valid_frames
 
     def compute_confidence(team_key: str):
-        valid_frames = get_valid_frames(team_key)
-        if total_frames and total_frames > 0:
-            ratio = max(0.0, min(1.0, valid_frames / total_frames))
-            if ratio >= 0.70:
-                return "Alta", ratio
-            if ratio >= 0.40:
-                return "Media", ratio
-            return "Baja", ratio
-        return "No disponible", None
+        score = 100.0
+        fallback_ratio = health_summary.get("fallback_ratio", None)
+        invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
+        p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
+        avg_short_tracks_ratio = health_summary.get("avg_short_tracks_ratio", None)
+        invalid_ratio = health_summary.get("invalid_ratio", None)
+        if fallback_ratio is not None and fallback_ratio > 0.05:
+            score -= 20
+        if invalid_formation_ratio is not None and invalid_formation_ratio > 0.10:
+            score -= 20
+        if p95_reproj_error_m is not None and p95_reproj_error_m > 1.5:
+            score -= 20
+        if avg_short_tracks_ratio is not None and avg_short_tracks_ratio > 0.4:
+            score -= 15
+        if invalid_ratio is not None and invalid_ratio > 0.20:
+            score -= 15
+        score = max(0.0, min(100.0, score))
+        if score >= 80:
+            return "Alta", score
+        if score >= 60:
+            return "Media", score
+        return "Baja", score
 
     def build_summary(team_key: str, confidence_level: str) -> list:
         team_metrics = metrics.get(team_key, {})
@@ -218,7 +234,7 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     level2, ratio2 = compute_confidence("team2")
     draw_text("Team 1", size=12, leading=14)
     if ratio1 is not None:
-        draw_text(f"Confianza: {level1} ({ratio1 * 100:.0f}%)", size=11, leading=14)
+        draw_text(f"Confianza: {level1} ({ratio1:.0f}/100)", size=11, leading=14)
     else:
         draw_text(f"Confianza: {level1}", size=11, leading=14)
     for item in build_summary("team1", level1):
@@ -226,7 +242,7 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     y -= 4
     draw_text("Team 2", size=12, leading=14)
     if ratio2 is not None:
-        draw_text(f"Confianza: {level2} ({ratio2 * 100:.0f}%)", size=11, leading=14)
+        draw_text(f"Confianza: {level2} ({ratio2:.0f}/100)", size=11, leading=14)
     else:
         draw_text(f"Confianza: {level2}", size=11, leading=14)
     for item in build_summary("team2", level2):
@@ -237,6 +253,9 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     modes = homography_telemetry.get("homography_mode", [])
     has_inertia = any(m == "inertia" for m in modes)
     has_fallback = any(m == "fallback" for m in modes)
+    fallback_ratio = health_summary.get("fallback_ratio", None)
+    invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
+    p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
     quality_notes = []
     if has_inertia:
         quality_notes.append("Se detectó inercia en homografía")
@@ -248,6 +267,14 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
         draw_text("Notas de calidad:", size=11, leading=14)
         for note in quality_notes:
             draw_bullet(note)
+    if fallback_ratio is not None or invalid_formation_ratio is not None or p95_reproj_error_m is not None:
+        draw_text("Indicadores de salud:", size=11, leading=14)
+        if fallback_ratio is not None:
+            draw_bullet(f"Fallback ratio: {fallback_ratio * 100:.1f}%")
+        if invalid_formation_ratio is not None:
+            draw_bullet(f"Invalid formation ratio: {invalid_formation_ratio * 100:.1f}%")
+        if p95_reproj_error_m is not None:
+            draw_bullet(f"P95 reproj error (m): {p95_reproj_error_m:.2f}")
 
     draw_section("Métricas agregadas")
     def metric_cell(team_metrics: dict, key: str, field: str):
@@ -794,6 +821,7 @@ if uploaded_video:
             st.markdown("### 🧠 Resumen automático del clip")
             metrics = stats.get('metrics', {})
             timeline = stats.get('timeline', {})
+            health_summary = stats.get('health_summary', {})
             duration_seconds = stats.get('duration_seconds', None)
             total_frames = stats.get('total_frames', None)
             fps = None
@@ -804,18 +832,33 @@ if uploaded_video:
                 team_metrics = metrics.get(team_key, {})
                 valid_frames = team_metrics.get('valid_frames', None)
                 if valid_frames is None:
+                    valid_frames = health_summary.get('valid_frames', None)
+                if valid_frames is None:
                     valid_frames = len(timeline.get(team_key, {}).get('frame_number', []))
                 return valid_frames
             def compute_confidence(team_key: str) -> tuple:
-                valid_frames = get_valid_frames(team_key)
-                if total_frames and total_frames > 0:
-                    ratio = max(0.0, min(1.0, valid_frames / total_frames))
-                    if ratio >= 0.70:
-                        return "Alta", ratio
-                    if ratio >= 0.40:
-                        return "Media", ratio
-                    return "Baja", ratio
-                return None, None
+                score = 100.0
+                fallback_ratio = health_summary.get("fallback_ratio", None)
+                invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
+                p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
+                avg_short_tracks_ratio = health_summary.get("avg_short_tracks_ratio", None)
+                invalid_ratio = health_summary.get("invalid_ratio", None)
+                if fallback_ratio is not None and fallback_ratio > 0.05:
+                    score -= 20
+                if invalid_formation_ratio is not None and invalid_formation_ratio > 0.10:
+                    score -= 20
+                if p95_reproj_error_m is not None and p95_reproj_error_m > 1.5:
+                    score -= 20
+                if avg_short_tracks_ratio is not None and avg_short_tracks_ratio > 0.4:
+                    score -= 15
+                if invalid_ratio is not None and invalid_ratio > 0.20:
+                    score -= 15
+                score = max(0.0, min(100.0, score))
+                if score >= 80:
+                    return "Alta", score
+                if score >= 60:
+                    return "Media", score
+                return "Baja", score
             def build_summary(team_key: str, confidence_level: str) -> list:
                 team_metrics = metrics.get(team_key, {})
                 depth_mean = team_metrics.get('block_depth_m', {}).get('mean', None)
@@ -850,11 +893,11 @@ if uploaded_video:
                 level1, ratio1 = compute_confidence('team1')
                 if level1:
                     if level1 == "Alta":
-                        st.success(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                        st.success(f"Confianza: {level1} ({ratio1:.0f}/100)")
                     elif level1 == "Media":
-                        st.info(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                        st.info(f"Confianza: {level1} ({ratio1:.0f}/100)")
                     else:
-                        st.warning(f"Confianza: {level1} ({ratio1 * 100:.0f}%)")
+                        st.warning(f"Confianza: {level1} ({ratio1:.0f}/100)")
                     if level1 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
                         st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
@@ -869,11 +912,11 @@ if uploaded_video:
                 level2, ratio2 = compute_confidence('team2')
                 if level2:
                     if level2 == "Alta":
-                        st.success(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                        st.success(f"Confianza: {level2} ({ratio2:.0f}/100)")
                     elif level2 == "Media":
-                        st.info(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                        st.info(f"Confianza: {level2} ({ratio2:.0f}/100)")
                     else:
-                        st.warning(f"Confianza: {level2} ({ratio2 * 100:.0f}%)")
+                        st.warning(f"Confianza: {level2} ({ratio2:.0f}/100)")
                     if level2 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
                         st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
@@ -883,6 +926,17 @@ if uploaded_video:
                     st.info("Confianza: N/D")
                 for item in build_summary('team2', level2):
                     st.markdown(f"- {item}")
+            fallback_ratio = health_summary.get("fallback_ratio", None)
+            invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
+            p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
+            if fallback_ratio is not None or invalid_formation_ratio is not None or p95_reproj_error_m is not None:
+                st.markdown("**Indicadores de salud**")
+                if fallback_ratio is not None:
+                    st.markdown(f"- Fallback ratio: {fallback_ratio * 100:.1f}%")
+                if invalid_formation_ratio is not None:
+                    st.markdown(f"- Invalid formation ratio: {invalid_formation_ratio * 100:.1f}%")
+                if p95_reproj_error_m is not None:
+                    st.markdown(f"- P95 reproj error (m): {p95_reproj_error_m:.2f}")
             st.caption("Qué mirar primero: (1) compactación, (2) línea defensiva, (3) heatmap.")
             col_t1, col_t2 = st.columns(2)
             if 'timeline' in stats:
