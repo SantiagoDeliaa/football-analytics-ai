@@ -643,6 +643,8 @@ def process_video(
     heatmap_samples_count = 0
     debug_scouting = False
     _heatmap_valid_frame_counter = 0
+    qc_sample_every = 10
+    frame_qc_samples = []
     homography_telemetry = {
         'frame_number': [],
         'homography_mode': [],
@@ -1064,6 +1066,14 @@ def process_video(
                 annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
             # --- RADAR ---
+            homography_mode = "fallback"
+            spread_ok = None
+            metrics1 = None
+            metrics2 = None
+            team1_centroid = None
+            team2_centroid = None
+            team1_oob = None
+            team2_oob = None
             if pitch_config:  # Si hay configuración de pitch (ya sea por modelo o approx)
                 transformer = None
                 
@@ -1129,13 +1139,11 @@ def process_video(
                     homography_mode = "inertia"
                 else:
                     homography_mode = "fallback"
+                if homography_state:
+                    spread_ok = homography_state != "INVALID_SPREAD"
                 if transformer:
                     try:
                         points_to_transform = {}
-                        team1_centroid = None
-                        team2_centroid = None
-                        team1_oob = None
-                        team2_oob = None
 
                         def get_bottom_center(dets):
                             return np.column_stack([
@@ -1436,6 +1444,30 @@ def process_video(
                     homography_telemetry['team1_percent_out_of_bounds'].append(None)
                     homography_telemetry['team2_percent_out_of_bounds'].append(None)
 
+            if qc_sample_every > 0 and frame_count % qc_sample_every == 0:
+                frame_qc_samples.append({
+                    'frame': frame_count,
+                    't': float(frame_count / fps) if fps > 0 else 0.0,
+                    'homography_mode': homography_mode,
+                    'reproj_error': getattr(homography_manager, 'last_reproj_error', None),
+                    'delta_H': getattr(homography_manager, 'last_delta', None),
+                    'spread_ok': spread_ok,
+                    'n_team1': int(np.sum(team1_mask)) if len(team1_mask) > 0 else 0,
+                    'n_team2': int(np.sum(team2_mask)) if len(team2_mask) > 0 else 0,
+                    'centroid_team1': team1_centroid,
+                    'centroid_team2': team2_centroid,
+                    'block_depth_team1': metrics1['block_depth_m'] if metrics1 else None,
+                    'block_width_team1': metrics1['block_width_m'] if metrics1 else None,
+                    'def_line_left_team1': metrics1['def_line_left_m'] if metrics1 else None,
+                    'def_line_right_team1': metrics1['def_line_right_m'] if metrics1 else None,
+                    'block_depth_team2': metrics2['block_depth_m'] if metrics2 else None,
+                    'block_width_team2': metrics2['block_width_m'] if metrics2 else None,
+                    'def_line_left_team2': metrics2['def_line_left_m'] if metrics2 else None,
+                    'def_line_right_team2': metrics2['def_line_right_m'] if metrics2 else None,
+                    'out_of_bounds_team1_ratio': team1_oob,
+                    'out_of_bounds_team2_ratio': team2_oob
+                })
+
             # Fallback: posesión píxeles si no se pudo hacer métrico
             if possession_tracker is not None and pitch_config and not _possession_assigned_metric:
                 possession_tracker.assign_possession(
@@ -1515,10 +1547,111 @@ def process_video(
         h2_down = hm2_norm[:52, :].reshape(26, 2, 17, 2).max(axis=(1, 3))
         heatmap_list_team1 = h1_down.tolist()
         heatmap_list_team2 = h2_down.tolist()
+        heatmap_total_samples_team1 = float(np.sum(heatmap_bins_team1))
+        heatmap_total_samples_team2 = float(np.sum(heatmap_bins_team2))
+        if heatmap_total_samples_team1 > 0:
+            x_coords = (np.arange(heatmap_bins_team1.shape[0]) + 0.5) * (105.0 / 53.0)
+            y_coords = (np.arange(heatmap_bins_team1.shape[1]) + 0.5) * (68.0 / 34.0)
+            heatmap_center_team1 = (
+                float(np.sum(heatmap_bins_team1 * x_coords[:, None]) / heatmap_total_samples_team1),
+                float(np.sum(heatmap_bins_team1 * y_coords[None, :]) / heatmap_total_samples_team1)
+            )
+        else:
+            heatmap_center_team1 = None
+        if heatmap_total_samples_team2 > 0:
+            x_coords = (np.arange(heatmap_bins_team2.shape[0]) + 0.5) * (105.0 / 53.0)
+            y_coords = (np.arange(heatmap_bins_team2.shape[1]) + 0.5) * (68.0 / 34.0)
+            heatmap_center_team2 = (
+                float(np.sum(heatmap_bins_team2 * x_coords[:, None]) / heatmap_total_samples_team2),
+                float(np.sum(heatmap_bins_team2 * y_coords[None, :]) / heatmap_total_samples_team2)
+            )
+        else:
+            heatmap_center_team2 = None
+
+        def _safe_mean(values):
+            vals = [v for v in values if v is not None]
+            if len(vals) == 0:
+                return None
+            return float(np.mean(vals))
+
+        def _mean_tuple(xs, ys):
+            mx = _safe_mean(xs)
+            my = _safe_mean(ys)
+            if mx is None or my is None:
+                return None
+            return (mx, my)
+
+        def _abs_deltas(series):
+            cleaned = [v for v in series if v is not None]
+            if len(cleaned) < 2:
+                return []
+            arr = np.array(cleaned, dtype=np.float32)
+            return np.abs(np.diff(arr)).tolist()
+
+        def _avg_and_p95(deltas):
+            if len(deltas) == 0:
+                return None, None
+            arr = np.array(deltas, dtype=np.float32)
+            return float(np.mean(arr)), float(np.percentile(arr, 95))
+
+        hm_modes = homography_telemetry['homography_mode']
+        homography_tracking_frames = int(np.sum([m == 'tracking' for m in hm_modes]))
+        homography_inertia_frames = int(np.sum([m == 'inertia' for m in hm_modes]))
+        homography_fallback_frames = int(np.sum([m == 'fallback' for m in hm_modes]))
+        homography_valid_frames = homography_tracking_frames + homography_inertia_frames
+        homography_valid_ratio = float(homography_valid_frames / frame_count) if frame_count > 0 else 0.0
+        avg_reproj_error = _safe_mean(homography_telemetry['reproj_error'])
+        avg_delta_H = _safe_mean(homography_telemetry['delta_H'])
+        team1_out_of_bounds_ratio = _safe_mean(homography_telemetry['team1_percent_out_of_bounds'])
+        team2_out_of_bounds_ratio = _safe_mean(homography_telemetry['team2_percent_out_of_bounds'])
+        avg_centroid_team1 = _mean_tuple(homography_telemetry['team1_centroid_x'], homography_telemetry['team1_centroid_y'])
+        avg_centroid_team2 = _mean_tuple(homography_telemetry['team2_centroid_x'], homography_telemetry['team2_centroid_y'])
+
+        t1_hist = team1_tracker.metrics_history
+        t2_hist = team2_tracker.metrics_history
+        t1_bd_avg, t1_bd_p95 = _avg_and_p95(_abs_deltas(list(t1_hist['block_depth_m'])))
+        t2_bd_avg, t2_bd_p95 = _avg_and_p95(_abs_deltas(list(t2_hist['block_depth_m'])))
+        t1_bw_avg, t1_bw_p95 = _avg_and_p95(_abs_deltas(list(t1_hist['block_width_m'])))
+        t2_bw_avg, t2_bw_p95 = _avg_and_p95(_abs_deltas(list(t2_hist['block_width_m'])))
+        t1_dl_avg, t1_dl_p95 = _avg_and_p95(_abs_deltas(list(t1_hist['def_line_left_m'])))
+        t2_dl_avg, t2_dl_p95 = _avg_and_p95(_abs_deltas(list(t2_hist['def_line_left_m'])))
+        t1_dr_avg, t1_dr_p95 = _avg_and_p95(_abs_deltas(list(t1_hist['def_line_right_m'])))
+        t2_dr_avg, t2_dr_p95 = _avg_and_p95(_abs_deltas(list(t2_hist['def_line_right_m'])))
+
+        def _grade(valid_ratio, homography_ratio):
+            score = min(valid_ratio, homography_ratio)
+            if score >= 0.7:
+                return "High"
+            if score >= 0.4:
+                return "Medium"
+            return "Low"
+
+        team1_valid_ratio = float(team1_tracker.valid_frames_count / frame_count) if frame_count > 0 else 0.0
+        team2_valid_ratio = float(team2_tracker.valid_frames_count / frame_count) if frame_count > 0 else 0.0
+        confidence_grade_team1 = _grade(team1_valid_ratio, homography_valid_ratio)
+        confidence_grade_team2 = _grade(team2_valid_ratio, homography_valid_ratio)
+
+        warnings = []
+        fallback_ratio = float(homography_fallback_frames / frame_count) if frame_count > 0 else 0.0
+        if fallback_ratio > 0.4:
+            warnings.append("High fallback ratio")
+        if avg_centroid_team1 is None or not (0 <= avg_centroid_team1[0] <= 105 and 0 <= avg_centroid_team1[1] <= 68):
+            warnings.append("Centroid out of expected range")
+        if avg_centroid_team2 is None or not (0 <= avg_centroid_team2[0] <= 105 and 0 <= avg_centroid_team2[1] <= 68):
+            warnings.append("Centroid out of expected range")
+        jitter_flags = [
+            (t1_bd_p95 or 0) > 8, (t2_bd_p95 or 0) > 8,
+            (t1_bw_p95 or 0) > 6, (t2_bw_p95 or 0) > 6,
+            (t1_dl_p95 or 0) > 6, (t2_dl_p95 or 0) > 6,
+            (t1_dr_p95 or 0) > 6, (t2_dr_p95 or 0) > 6,
+        ]
+        if any(jitter_flags):
+            warnings.append("Excessive jitter")
 
         stats_data = {
             'total_frames': frame_count,
             'duration_seconds': frame_count / fps if fps > 0 else 0,
+            'fps': fps,
             'formations': {
                 'team1': {
                     'most_common': get_dominant_formation(formations_timeline['team1']),
@@ -1550,7 +1683,46 @@ def process_video(
             'homography_settings': {
                 'max_inertia_frames': homography_manager.max_inertia_frames,
                 'disable_inertia': bool(disable_inertia)
-            }
+            },
+            'quality_control': {
+                'total_frames': frame_count,
+                'duration_seconds': frame_count / fps if fps > 0 else 0,
+                'fps': fps,
+                'homography_valid_frames': homography_valid_frames,
+                'homography_inertia_frames': homography_inertia_frames,
+                'homography_fallback_frames': homography_fallback_frames,
+                'homography_valid_ratio': homography_valid_ratio,
+                'avg_reproj_error': avg_reproj_error,
+                'avg_delta_H': avg_delta_H,
+                'team1_out_of_bounds_ratio': team1_out_of_bounds_ratio,
+                'team2_out_of_bounds_ratio': team2_out_of_bounds_ratio,
+                'avg_centroid_team1': avg_centroid_team1,
+                'avg_centroid_team2': avg_centroid_team2,
+                'avg_abs_delta_block_depth_team1': t1_bd_avg,
+                'avg_abs_delta_block_depth_team2': t2_bd_avg,
+                'p95_abs_delta_block_depth_team1': t1_bd_p95,
+                'p95_abs_delta_block_depth_team2': t2_bd_p95,
+                'avg_abs_delta_block_width_team1': t1_bw_avg,
+                'avg_abs_delta_block_width_team2': t2_bw_avg,
+                'p95_abs_delta_block_width_team1': t1_bw_p95,
+                'p95_abs_delta_block_width_team2': t2_bw_p95,
+                'avg_abs_delta_def_line_left_team1': t1_dl_avg,
+                'avg_abs_delta_def_line_left_team2': t2_dl_avg,
+                'p95_abs_delta_def_line_left_team1': t1_dl_p95,
+                'p95_abs_delta_def_line_left_team2': t2_dl_p95,
+                'avg_abs_delta_def_line_right_team1': t1_dr_avg,
+                'avg_abs_delta_def_line_right_team2': t2_dr_avg,
+                'p95_abs_delta_def_line_right_team1': t1_dr_p95,
+                'p95_abs_delta_def_line_right_team2': t2_dr_p95,
+                'heatmap_center_of_mass_team1': heatmap_center_team1,
+                'heatmap_center_of_mass_team2': heatmap_center_team2,
+                'heatmap_total_samples_team1': heatmap_total_samples_team1,
+                'heatmap_total_samples_team2': heatmap_total_samples_team2,
+                'confidence_grade_team1': confidence_grade_team1,
+                'confidence_grade_team2': confidence_grade_team2,
+                'warnings': warnings
+            },
+            'frame_qc_samples': frame_qc_samples
         }
 
         # --- ESTADÍSTICAS DE POSESIÓN ---
