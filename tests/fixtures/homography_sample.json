@@ -1,0 +1,9 @@
+{
+  "total_frames": 200,
+  "health_summary": {
+    "fallback_ratio": 0.2,
+    "valid_frames": 120,
+    "p95_reproj_error_m": 1.2,
+    "p95_delta_H": 0.18
+  }
+}

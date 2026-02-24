@@ -1,6 +1,17 @@
 import numpy as np
 import cv2
 from typing import Optional, Tuple
+from src.utils.quality_config import (
+    REPROJ_OK_MAX,
+    REPROJ_WARN_MAX,
+    REPROJ_INVALID,
+    REPROJ_WARMUP_MAX,
+    DELTA_H_WARN,
+    DELTA_H_CUT,
+    IMPROVE_MARGIN,
+    WARMUP_FRAMES,
+    REACQUIRE_FRAMES,
+)
 from src.utils.view_transformer import ViewTransformer
 
 class HomographyManager:
@@ -28,6 +39,17 @@ class HomographyManager:
         self.last_state: str = ""
         self.last_reproj_error: Optional[float] = None
         self.last_delta: Optional[float] = None
+        self.last_inlier_ratio: Optional[float] = None
+        self.mode: str = "ACQUIRE"
+        self.warmup_frames = WARMUP_FRAMES
+        self.reacquire_frames = REACQUIRE_FRAMES
+        self.warmup_counter = 0
+        self.reacquire_counter = 0
+        self.anchor_H: Optional[np.ndarray] = None
+        self.anchor_score: Optional[float] = None
+        self.anchor_reproj: Optional[float] = None
+        self.anchor_delta: Optional[float] = None
+        self.cut_detected = False
 
     def _normalize(self, H: np.ndarray) -> np.ndarray:
         d = H[2, 2]
@@ -61,11 +83,21 @@ class HomographyManager:
     ) -> bool:
         self.last_reproj_error = None
         self.last_delta = None
+        self.last_inlier_ratio = None
+        self.cut_detected = False
         if source_points is None or target_points is None:
             self.frames_since_valid += 1
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
         if len(source_points) < self.min_points or len(target_points) < self.min_points:
             self.frames_since_valid += 1
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
 
         w = None
@@ -80,6 +112,10 @@ class HomographyManager:
             if not spread_ok:
                 self.frames_since_valid += 1
                 self.last_state = "INVALID_SPREAD"
+                if self.current_H is not None and self.mode != "ACQUIRE":
+                    self.mode = "INERTIA"
+                elif self.current_H is None:
+                    self.mode = "FALLBACK"
                 return False
 
         sp = source_points.astype(np.float32)
@@ -88,11 +124,19 @@ class HomographyManager:
         if H_new is None:
             self.frames_since_valid += 1
             self.last_state = "INVALID_RANSAC"
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
 
         if not np.isfinite(H_new).all():
             self.frames_since_valid += 1
             self.last_state = "INVALID_RANSAC"
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
         try:
             det2 = float(np.linalg.det(H_new[0:2, 0:2]))
@@ -101,12 +145,18 @@ class HomographyManager:
         if abs(det2) < 1e-6:
             self.frames_since_valid += 1
             self.last_state = "INVALID_RANSAC"
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
 
         if mask is not None:
             inlier_mask = mask.ravel().astype(bool)
         else:
             inlier_mask = np.ones(len(sp), dtype=bool)
+        if len(inlier_mask) > 0:
+            self.last_inlier_ratio = float(np.sum(inlier_mask) / len(inlier_mask))
         sp_in = sp[inlier_mask]
         tp_in = tp[inlier_mask]
 
@@ -121,10 +171,14 @@ class HomographyManager:
         if err > self.max_reproj_error:
             self.frames_since_valid += 1
             self.last_state = "INVALID_REPROJ"
+            if self.current_H is not None and self.mode != "ACQUIRE":
+                self.mode = "INERTIA"
+            elif self.current_H is None:
+                self.mode = "FALLBACK"
             return False
 
         Hn_new = self._normalize(H_new)
-        if self.current_H is None:
+        if self.current_H is None and self.mode != "ACQUIRE":
             self.current_H = Hn_new
             self.frames_since_valid = 0
             self.last_state = "UPDATED_EMA"
@@ -133,29 +187,72 @@ class HomographyManager:
             return True
 
         Hn_cur = self.current_H
-        denom = np.linalg.norm(Hn_cur) + 1e-8
-        delta = float(np.linalg.norm(Hn_new - Hn_cur) / denom)
-        self.last_delta = float(delta)
-        if delta < self.delta_matrix_thresh:
-            Hn_smooth = self.alpha * Hn_new + (1.0 - self.alpha) * Hn_cur
-            self.current_H = self._normalize(Hn_smooth)
+        delta = None
+        if Hn_cur is not None:
+            denom = np.linalg.norm(Hn_cur) + 1e-8
+            delta = float(np.linalg.norm(Hn_new - Hn_cur) / denom)
+            self.last_delta = float(delta)
+            if delta > DELTA_H_CUT:
+                self.cut_detected = True
+
+        if self.mode == "ACQUIRE":
+            warmup_score = float(err + 0.5 * (delta if delta is not None else 0.0))
+            if err <= REPROJ_WARMUP_MAX:
+                if self.anchor_score is None or warmup_score < self.anchor_score:
+                    self.anchor_score = warmup_score
+                    self.anchor_H = Hn_new.copy()
+                    self.anchor_reproj = float(err)
+                    self.anchor_delta = float(delta) if delta is not None else None
+            self.warmup_counter += 1
+            if self.warmup_counter >= self.warmup_frames:
+                if self.anchor_H is not None:
+                    self.current_H = self.anchor_H
+                    self.frames_since_valid = 0
+                    self.mode = "TRACK"
+                    self.last_state = "WARMUP_ANCHOR"
+                    return True
+                self.mode = "FALLBACK"
+                self.last_state = "WARMUP_FAIL"
+                return False
+            self.last_state = "WARMUP"
+            return False
+
+        if Hn_cur is None:
+            self.current_H = Hn_new
             self.frames_since_valid = 0
             self.last_state = "UPDATED_EMA"
-            if self.debug:
-                print("H updated")
+            self.mode = "TRACK"
             return True
+
+        current_err = self._mean_reproj_error(Hn_cur, sp_in, tp_in, weights)
+        accept = False
+        if current_err is None:
+            accept = True
         else:
-            if self.frames_since_valid >= self.switch_after_frames:
-                self.current_H = self._normalize(Hn_new)
-                self.frames_since_valid = 0
-                self.last_state = "UPDATED_SWITCH"
-                if self.debug:
-                    print("H updated")
-                return True
+            if err <= current_err - IMPROVE_MARGIN:
+                accept = True
+            elif err <= REPROJ_OK_MAX and (delta is not None and delta <= DELTA_H_WARN):
+                accept = True
+
+        if accept:
+            if delta is not None and delta < self.delta_matrix_thresh:
+                Hn_smooth = self.alpha * Hn_new + (1.0 - self.alpha) * Hn_cur
+                self.current_H = self._normalize(Hn_smooth)
+                self.last_state = "UPDATED_EMA"
             else:
-                self.frames_since_valid += 1
-                self.last_state = "INVALID_DELTA"
-                return False
+                self.current_H = self._normalize(Hn_new)
+                self.last_state = "UPDATED_SWITCH"
+            self.frames_since_valid = 0
+            self.mode = "TRACK"
+            return True
+
+        self.frames_since_valid += 1
+        self.last_state = "GUARDRAIL_HOLD"
+        if self.current_H is not None and self.mode != "ACQUIRE":
+            self.mode = "REACQUIRE" if self.mode == "REACQUIRE" else "INERTIA"
+        elif self.current_H is None:
+            self.mode = "FALLBACK"
+        return False
 
     def get_transformer(self) -> Optional[ViewTransformer]:
         if self.current_H is None:
@@ -166,4 +263,15 @@ class HomographyManager:
                 if self.debug:
                     print("H reused (inertia)")
             return ViewTransformer(m=self.current_H)
+        self.mode = "FALLBACK"
         return None
+
+    def start_reacquire(self):
+        self.mode = "REACQUIRE"
+        self.reacquire_counter = 0
+
+    def tick_reacquire(self):
+        if self.mode == "REACQUIRE":
+            self.reacquire_counter += 1
+            if self.reacquire_counter >= self.reacquire_frames:
+                self.mode = "INERTIA" if self.current_H is not None else "FALLBACK"
