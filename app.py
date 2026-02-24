@@ -256,6 +256,12 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     fallback_ratio = health_summary.get("fallback_ratio", None)
     invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
     p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
+    p95_churn_ratio = health_summary.get("p95_churn_ratio", None)
+    churn_warn_ratio = health_summary.get("churn_warn_ratio", None)
+    p95_max_speed_mps = health_summary.get("p95_max_speed_mps", None)
+    speed_violation_ratio = health_summary.get("speed_violation_ratio", None)
+    p95_max_jump_m = health_summary.get("p95_max_jump_m", None)
+    jump_violation_ratio = health_summary.get("jump_violation_ratio", None)
     quality_notes = []
     if has_inertia:
         quality_notes.append("Se detectó inercia en homografía")
@@ -267,7 +273,14 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
         draw_text("Notas de calidad:", size=11, leading=14)
         for note in quality_notes:
             draw_bullet(note)
-    if fallback_ratio is not None or invalid_formation_ratio is not None or p95_reproj_error_m is not None:
+    if (
+        fallback_ratio is not None
+        or invalid_formation_ratio is not None
+        or p95_reproj_error_m is not None
+        or p95_churn_ratio is not None
+        or p95_max_speed_mps is not None
+        or p95_max_jump_m is not None
+    ):
         draw_text("Indicadores de salud:", size=11, leading=14)
         if fallback_ratio is not None:
             draw_bullet(f"Fallback ratio: {fallback_ratio * 100:.1f}%")
@@ -275,6 +288,18 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
             draw_bullet(f"Invalid formation ratio: {invalid_formation_ratio * 100:.1f}%")
         if p95_reproj_error_m is not None:
             draw_bullet(f"P95 reproj error (m): {p95_reproj_error_m:.2f}")
+        if p95_churn_ratio is not None:
+            draw_bullet(f"P95 churn ratio: {p95_churn_ratio * 100:.1f}%")
+        if churn_warn_ratio is not None:
+            draw_bullet(f"Churn warn ratio: {churn_warn_ratio * 100:.1f}%")
+        if p95_max_speed_mps is not None:
+            draw_bullet(f"P95 max speed (m/s): {p95_max_speed_mps:.2f}")
+        if speed_violation_ratio is not None:
+            draw_bullet(f"Speed violations: {speed_violation_ratio * 100:.1f}%")
+        if p95_max_jump_m is not None:
+            draw_bullet(f"P95 max jump (m): {p95_max_jump_m:.2f}")
+        if jump_violation_ratio is not None:
+            draw_bullet(f"Jump violations: {jump_violation_ratio * 100:.1f}%")
 
     draw_section("Métricas agregadas")
     def metric_cell(team_metrics: dict, key: str, field: str):
@@ -929,7 +954,20 @@ if uploaded_video:
             fallback_ratio = health_summary.get("fallback_ratio", None)
             invalid_formation_ratio = health_summary.get("invalid_formation_ratio", None)
             p95_reproj_error_m = health_summary.get("p95_reproj_error_m", None)
-            if fallback_ratio is not None or invalid_formation_ratio is not None or p95_reproj_error_m is not None:
+            p95_churn_ratio = health_summary.get("p95_churn_ratio", None)
+            churn_warn_ratio = health_summary.get("churn_warn_ratio", None)
+            p95_max_speed_mps = health_summary.get("p95_max_speed_mps", None)
+            speed_violation_ratio = health_summary.get("speed_violation_ratio", None)
+            p95_max_jump_m = health_summary.get("p95_max_jump_m", None)
+            jump_violation_ratio = health_summary.get("jump_violation_ratio", None)
+            if (
+                fallback_ratio is not None
+                or invalid_formation_ratio is not None
+                or p95_reproj_error_m is not None
+                or p95_churn_ratio is not None
+                or p95_max_speed_mps is not None
+                or p95_max_jump_m is not None
+            ):
                 st.markdown("**Indicadores de salud**")
                 if fallback_ratio is not None:
                     st.markdown(f"- Fallback ratio: {fallback_ratio * 100:.1f}%")
@@ -937,6 +975,18 @@ if uploaded_video:
                     st.markdown(f"- Invalid formation ratio: {invalid_formation_ratio * 100:.1f}%")
                 if p95_reproj_error_m is not None:
                     st.markdown(f"- P95 reproj error (m): {p95_reproj_error_m:.2f}")
+                if p95_churn_ratio is not None:
+                    st.markdown(f"- P95 churn ratio: {p95_churn_ratio * 100:.1f}%")
+                if churn_warn_ratio is not None:
+                    st.markdown(f"- Churn warn ratio: {churn_warn_ratio * 100:.1f}%")
+                if p95_max_speed_mps is not None:
+                    st.markdown(f"- P95 max speed (m/s): {p95_max_speed_mps:.2f}")
+                if speed_violation_ratio is not None:
+                    st.markdown(f"- Speed violations: {speed_violation_ratio * 100:.1f}%")
+                if p95_max_jump_m is not None:
+                    st.markdown(f"- P95 max jump (m): {p95_max_jump_m:.2f}")
+                if jump_violation_ratio is not None:
+                    st.markdown(f"- Jump violations: {jump_violation_ratio * 100:.1f}%")
             st.caption("Qué mirar primero: (1) compactación, (2) línea defensiva, (3) heatmap.")
             col_t1, col_t2 = st.columns(2)
             if 'timeline' in stats:

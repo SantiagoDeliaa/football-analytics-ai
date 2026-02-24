@@ -13,12 +13,16 @@ from src.controllers.formation_detector import FormationDetector
 from src.controllers.tactical_metrics import TacticalMetricsCalculator, TacticalMetricsTracker
 from src.utils.quality_config import (
     REPROJ_OK_MAX,
+    REPROJ_WARN_MAX,
     REPROJ_INVALID,
     DELTA_H_WARN,
     DELTA_H_CUT,
     MIN_TRACKS_ACTIVE,
     MIN_DETECTIONS,
     SHORT_TRACK_AGE,
+    SPEED_MAX_MPS,
+    JUMP_MAX_M,
+    CHURN_WARN,
 )
 from ultralytics import YOLO
 
@@ -669,7 +673,18 @@ def process_video(
     }
     health_timeline = []
     track_age = {}
-    frame_valid_flags = []
+    prev_track_ids = set()
+    ball_track_age_map = {}
+    prev_field_positions = {}
+    max_speed_mps_list = []
+    speed_violation_flags = []
+    max_jump_m_list = []
+    jump_violation_flags = []
+    churn_ratio_list = []
+    frame_valid_demo_flags = []
+    frame_valid_strict_flags = []
+    last_good_H = None
+    last_good_age_frames = None
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -988,6 +1003,10 @@ def process_video(
                         team1_mask.append(False)
                         team2_mask.append(False)
                         referee_mask.append(False)
+
+            refs_detected_count = int(np.sum(referee_mask))
+            players_detected_count = int(np.sum(team1_mask) + np.sum(team2_mask) + np.sum(goalkeeper_mask))
+            refs_filtered_out_count = refs_detected_count
             
             # Anotar
             if any(team1_mask):
@@ -1069,17 +1088,35 @@ def process_video(
             else:
                 ball_missing_frames += 1
 
+            ball_detected = bool(tracked_ball is not None and len(tracked_ball) > 0)
+            ball_conf = None
+            if ball_detected and getattr(tracked_ball, "confidence", None) is not None and len(tracked_ball.confidence) > 0:
+                ball_conf = float(tracked_ball.confidence[0])
+            ball_track_age = None
+            if ball_detected and tracked_ball.tracker_id is not None and len(tracked_ball.tracker_id) > 0:
+                ball_tid = int(tracked_ball.tracker_id[0])
+                for tid in list(ball_track_age_map.keys()):
+                    if tid != ball_tid:
+                        del ball_track_age_map[tid]
+                ball_track_age_map[ball_tid] = ball_track_age_map.get(ball_tid, 0) + 1
+                ball_track_age = int(ball_track_age_map[ball_tid])
+
             # --- ANÁLISIS DE POSESIÓN (fallback píxeles, se mejora abajo con métrico) ---
+            possession_result = None
             _possession_assigned_metric = False
             if possession_tracker is not None and not pitch_config:
                 # Sin homografía: usar método original en píxeles
-                possession_tracker.assign_possession(
+                possession_result = possession_tracker.assign_possession(
                     tracked_persons, team1_mask, team2_mask, tracked_ball
                 )
                 annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
             # --- RADAR ---
+            max_speed_mps = None
+            speed_violation = False
+            max_jump_m = None
             homography_mode = "fallback"
+            using_last_good = False
             spread_ok = None
             metrics1 = None
             metrics2 = None
@@ -1089,6 +1126,8 @@ def process_video(
             team2_oob = None
             if pitch_config:  # Si hay configuración de pitch (ya sea por modelo o approx)
                 transformer = None
+                if last_good_H is not None:
+                    last_good_age_frames = 0 if last_good_age_frames is None else last_good_age_frames + 1
                 
                 # Caso A: Modelo de Pitch disponible
                 if pitch_model:
@@ -1160,6 +1199,28 @@ def process_video(
                     homography_mode = "fallback"
                 if homography_state:
                     spread_ok = homography_state != "INVALID_SPREAD"
+                reproj_error_m_pre = getattr(homography_manager, 'last_reproj_error', None)
+                inlier_ratio_pre = getattr(homography_manager, 'last_inlier_ratio', None)
+                reproj_nan_pre = False
+                if reproj_error_m_pre is not None:
+                    try:
+                        reproj_nan_pre = bool(np.isnan(reproj_error_m_pre))
+                    except Exception:
+                        reproj_nan_pre = False
+                invalid_state_pre = bool(homography_state.startswith("INVALID"))
+                fallback_usable = (
+                    homography_mode == "fallback"
+                    and last_good_H is not None
+                    and reproj_error_m_pre is not None
+                    and not reproj_nan_pre
+                    and reproj_error_m_pre <= REPROJ_WARN_MAX
+                    and (inlier_ratio_pre is None or inlier_ratio_pre >= 0.6)
+                    and not invalid_state_pre
+                )
+                if transformer is None and fallback_usable:
+                    transformer = ViewTransformer(m=last_good_H)
+                    homography_mode = "inertia"
+                    using_last_good = True
                 if transformer:
                     try:
                         points_to_transform = {}
@@ -1240,6 +1301,8 @@ def process_video(
                                 points_to_transform['ball'] = raw_ball_pos
                         
                         # --- VELOCIDAD Y DISTANCIA (posesión) ---
+                        speeds_kmh_frame = []
+                        max_jump_m = None
                         if speed_estimator is not None:
                             for team_key in ('team1', 'team2'):
                                 mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
@@ -1251,12 +1314,32 @@ def process_video(
                                             points_to_transform[team_key],
                                             [team_key] * len(team_dets),
                                         )
+                                        for tid, data in speed_data.items():
+                                            speed_kmh = data.get('speed_kmh')
+                                            if speed_kmh is not None:
+                                                speeds_kmh_frame.append(float(speed_kmh))
                                         for j, tid in enumerate(team_dets.tracker_id):
                                             if tid in speed_data and speed_data[tid]['speed_kmh'] > 2.0:
                                                 annotated_frame = speed_estimator.draw_player_speed(
                                                     annotated_frame, tid, team_dets.xyxy[j],
                                                     speed_data[tid]['speed_kmh'],
                                                 )
+                        for team_key in ('team1', 'team2'):
+                            mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
+                            if team_key in points_to_transform and any(mask_arr):
+                                team_dets = tracked_persons[mask_arr]
+                                if team_dets.tracker_id is not None:
+                                    for j, tid in enumerate(team_dets.tracker_id):
+                                        tid = int(tid)
+                                        pos = points_to_transform[team_key][j]
+                                        if tid in prev_field_positions:
+                                            dist = float(np.linalg.norm(pos - prev_field_positions[tid]))
+                                            if max_jump_m is None or dist > max_jump_m:
+                                                max_jump_m = dist
+                                        prev_field_positions[tid] = pos.copy()
+                        if speeds_kmh_frame:
+                            max_speed_mps = float(max(speeds_kmh_frame) / 3.6)
+                            speed_violation = max_speed_mps > SPEED_MAX_MPS
 
                         # --- Fix C: POSESIÓN EN ESPACIO MÉTRICO ---
                         if possession_tracker is not None:
@@ -1276,7 +1359,7 @@ def process_video(
                                         all_field_pos.extend(points_to_transform[tk].tolist())
                                         all_team_labels.extend([tk] * len(team_dets))
                             if all_tids and ball_field is not None:
-                                possession_tracker.assign_possession_metric(
+                                possession_result = possession_tracker.assign_possession_metric(
                                     all_tids,
                                     np.array(all_field_pos),
                                     all_team_labels,
@@ -1477,9 +1560,17 @@ def process_video(
                     del track_age[tid]
             for tid in current_ids:
                 track_age[tid] = track_age.get(tid, 0) + 1
+            for tid in list(prev_field_positions.keys()):
+                if tid not in current_ids:
+                    del prev_field_positions[tid]
 
             detections_count = int(len(player_detections)) if player_detections is not None else 0
             tracks_active = int(len(track_age))
+            new_tracks_count = int(len(current_ids - prev_track_ids))
+            ended_tracks_count = int(len(prev_track_ids - current_ids))
+            churn_ratio = float((new_tracks_count + ended_tracks_count) / max(tracks_active, 1))
+            churn_ratio_list.append(churn_ratio)
+            prev_track_ids = set(current_ids)
             avg_track_age = float(np.mean(list(track_age.values()))) if tracks_active > 0 else 0.0
             short_tracks = int(np.sum([1 for a in track_age.values() if a < SHORT_TRACK_AGE]))
             short_tracks_ratio = float(short_tracks / tracks_active) if tracks_active > 0 else 0.0
@@ -1488,18 +1579,33 @@ def process_video(
             delta_H = getattr(homography_manager, 'last_delta', None)
             hm = homography_mode
             hs = "ok"
+            h_accept_reason = "invalid"
             reproj_is_nan = False
             if reproj_error_m is not None:
                 try:
                     reproj_is_nan = bool(np.isnan(reproj_error_m))
                 except Exception:
                     reproj_is_nan = False
-            if reproj_error_m is None or reproj_is_nan or (reproj_error_m is not None and reproj_error_m > REPROJ_INVALID):
+            homography_state = getattr(homography_manager, 'last_state', "")
+            invalid_state = bool(homography_state.startswith("INVALID"))
+            inlier_ratio = getattr(homography_manager, 'last_inlier_ratio', None)
+            if reproj_error_m is None or reproj_is_nan or (reproj_error_m is not None and reproj_error_m > REPROJ_INVALID) or invalid_state:
                 hs = "invalid"
-            elif hm == "fallback":
-                hs = "fallback"
-            elif (reproj_error_m is not None and reproj_error_m > REPROJ_OK_MAX) or (delta_H is not None and delta_H > DELTA_H_WARN):
-                hs = "warn"
+                h_accept_reason = "invalid"
+            else:
+                if reproj_error_m <= REPROJ_OK_MAX and (delta_H is None or delta_H <= DELTA_H_WARN):
+                    hs = "ok"
+                    h_accept_reason = "accepted_ok"
+                else:
+                    hs = "warn"
+                    if reproj_error_m > REPROJ_WARN_MAX:
+                        h_accept_reason = "rejected_high_reproj"
+                    elif inlier_ratio is not None and inlier_ratio < 0.6:
+                        h_accept_reason = "rejected_low_inliers"
+                    elif using_last_good:
+                        h_accept_reason = "kept_last_good"
+                    else:
+                        h_accept_reason = "accepted_warn"
             cut_detected = bool(getattr(homography_manager, 'cut_detected', False))
 
             formation_label = None
@@ -1535,8 +1641,55 @@ def process_video(
                 if reasons:
                     formation_invalid_reason = ",".join(sorted(set(reasons)))
 
-            frame_valid = bool(hs == "ok" and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
-            frame_valid_flags.append(frame_valid)
+            frame_valid_for_metrics_strict = bool(hs == "ok" and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
+            frame_valid_for_metrics_demo = bool(hs in {"ok", "warn"} and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
+            if hs in {"ok", "warn"} and reproj_error_m is not None and reproj_error_m <= REPROJ_WARN_MAX:
+                if inlier_ratio is None or inlier_ratio >= 0.6:
+                    if getattr(homography_manager, 'current_H', None) is not None and not using_last_good:
+                        last_good_H = homography_manager.current_H.copy()
+                        last_good_age_frames = 0
+                elif h_accept_reason == "rejected_low_inliers":
+                    pass
+            frame_valid_demo_flags.append(frame_valid_for_metrics_demo)
+            frame_valid_strict_flags.append(frame_valid_for_metrics_strict)
+
+            if max_speed_mps is not None:
+                max_speed_mps_list.append(max_speed_mps)
+                speed_violation_flags.append(bool(speed_violation))
+            jump_violation = False
+            if max_jump_m is not None:
+                jump_violation = bool(max_jump_m > JUMP_MAX_M and not cut_detected)
+                max_jump_m_list.append(max_jump_m)
+                jump_violation_flags.append(jump_violation)
+
+            possession_state = "unknown"
+            contested_reason = None
+            if possession_tracker is not None:
+                if possession_result is None:
+                    possession_state = "contested"
+                    ball_far = False
+                    if ball_detected and len(tracked_persons) > 0 and (any(team1_mask) or any(team2_mask)):
+                        player_mask = np.array(team1_mask) | np.array(team2_mask)
+                        player_dets = tracked_persons[player_mask]
+                        if len(player_dets) > 0:
+                            ball_bb = tracked_ball.xyxy[0]
+                            ball_center = np.array([(ball_bb[0] + ball_bb[2]) / 2, (ball_bb[1] + ball_bb[3]) / 2])
+                            player_centers = get_bottom_center(player_dets)
+                            dists = np.linalg.norm(player_centers - ball_center, axis=1)
+                            if len(dists) > 0:
+                                min_dist = float(np.min(dists))
+                                max_dist = getattr(possession_tracker, "max_distance", 70.0)
+                                ball_far = min_dist > max_dist
+                    if not ball_detected:
+                        contested_reason = "no_ball"
+                    elif ball_conf is not None and ball_conf < 0.2:
+                        contested_reason = "low_ball_conf"
+                    elif ball_far:
+                        contested_reason = "ball_far_from_players"
+                    else:
+                        contested_reason = "other"
+                else:
+                    possession_state = possession_result[0] if isinstance(possession_result, tuple) else possession_result
 
             health_timeline.append({
                 'frame_idx': int(frame_count),
@@ -1547,10 +1700,29 @@ def process_video(
                 'cut_detected': cut_detected,
                 'detections_count': detections_count,
                 'tracks_active': tracks_active,
+                'new_tracks_count': new_tracks_count,
+                'ended_tracks_count': ended_tracks_count,
+                'churn_ratio': churn_ratio,
+                'refs_detected_count': refs_detected_count,
+                'refs_filtered_out_count': refs_filtered_out_count,
+                'players_detected_count': players_detected_count,
+                'ball_detected': ball_detected,
+                'ball_conf': None if ball_conf is None else float(ball_conf),
+                'ball_track_age': ball_track_age,
+                'possession_state': possession_state,
+                'contested_reason': contested_reason,
+                'max_player_speed_mps': None if max_speed_mps is None else float(max_speed_mps),
+                'speed_violation': bool(speed_violation) if max_speed_mps is not None else None,
+                'max_player_jump_m': None if max_jump_m is None else float(max_jump_m),
+                'jump_violation': bool(jump_violation) if max_jump_m is not None else None,
                 'avg_track_age': avg_track_age,
                 'short_tracks_ratio': short_tracks_ratio,
-                'frame_valid_for_metrics': frame_valid,
+                'frame_valid_for_metrics': frame_valid_for_metrics_demo,
+                'frame_valid_for_metrics_demo': frame_valid_for_metrics_demo,
+                'frame_valid_for_metrics_strict': frame_valid_for_metrics_strict,
                 'ransac_inlier_ratio': getattr(homography_manager, 'last_inlier_ratio', None),
+                'H_accept_reason': h_accept_reason,
+                'last_good_age_frames': last_good_age_frames,
                 'formation_label': formation_label,
                 'formation_valid': bool(formation_valid),
                 'formation_invalid_reason': formation_invalid_reason
@@ -1581,7 +1753,7 @@ def process_video(
 
             # Fallback: posesión píxeles si no se pudo hacer métrico
             if possession_tracker is not None and pitch_config and not _possession_assigned_metric:
-                possession_tracker.assign_possession(
+                possession_result = possession_tracker.assign_possession(
                     tracked_persons, team1_mask, team2_mask, tracked_ball
                 )
                 annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
@@ -1737,9 +1909,10 @@ def process_video(
                 return "Medium"
             return "Low"
 
-        valid_frames_recalc = int(np.sum([1 for v in frame_valid_flags if v]))
-        team1_valid_ratio = float(valid_frames_recalc / frame_count) if frame_count > 0 else 0.0
-        team2_valid_ratio = float(valid_frames_recalc / frame_count) if frame_count > 0 else 0.0
+        valid_frames_demo = int(np.sum([1 for v in frame_valid_demo_flags if v]))
+        valid_frames_strict = int(np.sum([1 for v in frame_valid_strict_flags if v]))
+        team1_valid_ratio = float(valid_frames_demo / frame_count) if frame_count > 0 else 0.0
+        team2_valid_ratio = float(valid_frames_demo / frame_count) if frame_count > 0 else 0.0
         confidence_grade_team1 = _grade(team1_valid_ratio, homography_valid_ratio)
         confidence_grade_team2 = _grade(team2_valid_ratio, homography_valid_ratio)
 
@@ -1773,14 +1946,30 @@ def process_video(
         invalid_formation_frames = int(np.sum([1 for h in health_timeline if not h.get('formation_valid')]))
         avg_tracks_active = _safe_mean([h.get('tracks_active') for h in health_timeline])
         avg_short_tracks_ratio = _safe_mean([h.get('short_tracks_ratio') for h in health_timeline])
+        avg_churn_ratio = _safe_mean(churn_ratio_list)
+        p95_churn_ratio = _safe_p95(churn_ratio_list)
+        churn_warn_ratio = None
+        if len(churn_ratio_list) > 0:
+            churn_warn_ratio = float(np.sum([c > CHURN_WARN for c in churn_ratio_list]) / len(churn_ratio_list))
+        avg_max_speed_mps = _safe_mean(max_speed_mps_list)
+        p95_max_speed_mps = _safe_p95(max_speed_mps_list)
+        speed_violation_ratio = None
+        if len(speed_violation_flags) > 0:
+            speed_violation_ratio = float(np.sum(speed_violation_flags) / len(speed_violation_flags))
+        avg_max_jump_m = _safe_mean(max_jump_m_list)
+        p95_max_jump_m = _safe_p95(max_jump_m_list)
+        jump_violation_ratio = None
+        if len(jump_violation_flags) > 0:
+            jump_violation_ratio = float(np.sum(jump_violation_flags) / len(jump_violation_flags))
         p95_reproj_error_m = _safe_p95(homography_telemetry['reproj_error'])
         p95_delta_H = _safe_p95(homography_telemetry['delta_H'])
-        invalid_ratio = float(invalid_frames / frame_count) if frame_count > 0 else 0.0
+        invalid_ratio = float(1.0 - (valid_frames_demo / frame_count)) if frame_count > 0 else 0.0
+        strict_invalid_ratio = float(1.0 - (valid_frames_strict / frame_count)) if frame_count > 0 else 0.0
         warn_ratio = float(warn_frames / frame_count) if frame_count > 0 else 0.0
         fallback_ratio_health = float(fallback_frames / frame_count) if frame_count > 0 else 0.0
         invalid_formation_ratio = float(invalid_formation_frames / frame_count) if frame_count > 0 else 0.0
-        team1_stats['valid_frames'] = valid_frames_recalc
-        team2_stats['valid_frames'] = valid_frames_recalc
+        team1_stats['valid_frames'] = valid_frames_demo
+        team2_stats['valid_frames'] = valid_frames_demo
         stats_data = {
             'total_frames': frame_count,
             'duration_seconds': frame_count / fps if fps > 0 else 0,
@@ -1858,8 +2047,10 @@ def process_video(
             },
             'health_summary': {
                 'total_frames': frame_count,
-                'valid_frames': valid_frames_recalc,
+                'valid_frames': valid_frames_demo,
+                'valid_frames_strict': valid_frames_strict,
                 'invalid_ratio': invalid_ratio,
+                'strict_invalid_ratio': strict_invalid_ratio,
                 'fallback_ratio': fallback_ratio_health,
                 'warn_ratio': warn_ratio,
                 'avg_reproj_error_m': avg_reproj_error,
@@ -1868,7 +2059,16 @@ def process_video(
                 'p95_delta_H': p95_delta_H,
                 'avg_tracks_active': avg_tracks_active,
                 'avg_short_tracks_ratio': avg_short_tracks_ratio,
-                'invalid_formation_ratio': invalid_formation_ratio
+                'invalid_formation_ratio': invalid_formation_ratio,
+                'avg_churn_ratio': avg_churn_ratio,
+                'p95_churn_ratio': p95_churn_ratio,
+                'churn_warn_ratio': churn_warn_ratio,
+                'avg_max_speed_mps': avg_max_speed_mps,
+                'p95_max_speed_mps': p95_max_speed_mps,
+                'speed_violation_ratio': speed_violation_ratio,
+                'avg_max_jump_m': avg_max_jump_m,
+                'p95_max_jump_m': p95_max_jump_m,
+                'jump_violation_ratio': jump_violation_ratio
             },
             'frame_qc_samples': frame_qc_samples
         }
