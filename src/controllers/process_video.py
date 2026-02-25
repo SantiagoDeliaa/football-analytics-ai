@@ -5,6 +5,7 @@ from typing import Dict, Tuple, List
 from sklearn.cluster import KMeans
 from collections import deque, Counter
 import json
+import gzip
 from pathlib import Path
 from src.utils.view_transformer import ViewTransformer
 from src.utils.homography_manager import HomographyManager
@@ -17,13 +18,24 @@ from src.utils.quality_config import (
     REPROJ_INVALID,
     DELTA_H_WARN,
     DELTA_H_CUT,
+    DELTA_H_ALPHA,
+    DELTA_H_CLAMP_EXPORT,
+    DELTA_H_CLAMP_SMOOTH,
+    CUT_DEBOUNCE_FRAMES,
+    CUT_COOLDOWN_FRAMES,
     REACQUIRE_FRAMES,
+    N_DIR_FRAMES,
+    DIR_CONF_MIN,
     MIN_TRACKS_ACTIVE,
     MIN_DETECTIONS,
     SHORT_TRACK_AGE,
     SPEED_MAX_MPS,
     JUMP_MAX_M,
     CHURN_WARN,
+    EXPORT_PROFILE,
+    SAMPLE_STRIDE,
+    TOPK_FRAMES,
+    ENABLE_COMPRESSION,
 )
 from ultralytics import YOLO
 
@@ -52,6 +64,198 @@ def convert_to_native_types(obj):
         return tuple(convert_to_native_types(item) for item in obj)
     else:
         return obj
+
+
+def _rle_encode(labels):
+    if not labels:
+        return []
+    encoded = []
+    current = labels[0]
+    count = 1
+    for label in labels[1:]:
+        if label == current:
+            count += 1
+        else:
+            encoded.append({"label": current, "count": count})
+            current = label
+            count = 1
+    encoded.append({"label": current, "count": count})
+    return encoded
+
+
+def _topk_histogram(labels, top_k):
+    if not labels:
+        return []
+    counter = Counter(labels)
+    return [{"label": label, "count": int(count)} for label, count in counter.most_common(top_k)]
+
+
+def _heatmap_stats(arr):
+    if arr is None or arr.size == 0:
+        return {
+            "shape": [0, 0],
+            "min": None,
+            "max": None,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "p95": None,
+            "p99": None,
+        }
+    return {
+        "shape": [int(arr.shape[0]), int(arr.shape[1])],
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+        "mean": float(np.mean(arr)),
+        "p50": float(np.percentile(arr, 50)),
+        "p90": float(np.percentile(arr, 90)),
+        "p95": float(np.percentile(arr, 95)),
+        "p99": float(np.percentile(arr, 99)),
+    }
+
+
+def _downsample_heatmap(arr, target_shape):
+    if arr is None or arr.size == 0:
+        return []
+    resized = cv2.resize(arr, target_shape, interpolation=cv2.INTER_AREA)
+    return resized.tolist()
+
+
+def _summarize_heatmap(heatmap, target_shape):
+    if heatmap is None:
+        return None
+    arr = np.array(heatmap, dtype=np.float32)
+    return {
+        "stats": _heatmap_stats(arr),
+        "downsampled": _downsample_heatmap(arr, target_shape),
+    }
+
+
+def _sample_health_frames(health_timeline, stride):
+    if not health_timeline:
+        return []
+    return [h for idx, h in enumerate(health_timeline) if idx % stride == 0]
+
+
+def _topk_health_frames(health_timeline, key, k, reverse=True):
+    candidates = [h for h in health_timeline if h.get(key) is not None]
+    candidates.sort(key=lambda h: h.get(key), reverse=reverse)
+    return candidates[:k]
+
+
+def build_export_payload(stats_data, export_profile, cfg):
+    profile = export_profile or "debug_sampled"
+    sample_stride = int(cfg.get("sample_stride", 10))
+    topk_frames = int(cfg.get("topk_frames", 20))
+    topk_formations = int(cfg.get("topk_formations", 5))
+    export_version = cfg.get("version")
+    heatmap_shape = cfg.get("heatmap_downsample_shape", (20, 20))
+
+    base = {
+        "export_profile": profile,
+        "version": export_version,
+        "fps": stats_data.get("fps"),
+        "duration_seconds": stats_data.get("duration_seconds"),
+        "duration_s": stats_data.get("duration_seconds"),
+        "total_frames": stats_data.get("total_frames"),
+        "health_summary": stats_data.get("health_summary"),
+        "quality_control": stats_data.get("quality_control"),
+        "metrics": stats_data.get("metrics"),
+        "possession": stats_data.get("possession"),
+    }
+
+    formations = stats_data.get("formations", {})
+    t1_timeline = formations.get("team1", {}).get("timeline", [])
+    t2_timeline = formations.get("team2", {}).get("timeline", [])
+    formations_payload = {
+        "team1": {
+            "most_common": formations.get("team1", {}).get("most_common"),
+            "top_k": _topk_histogram(t1_timeline, topk_formations),
+        },
+        "team2": {
+            "most_common": formations.get("team2", {}).get("most_common"),
+            "top_k": _topk_histogram(t2_timeline, topk_formations),
+        },
+        "timeline_rle": {
+            "team1": _rle_encode(t1_timeline),
+            "team2": _rle_encode(t2_timeline),
+        },
+        "timeline_rle_total_frames": {
+            "team1": int(len(t1_timeline)),
+            "team2": int(len(t2_timeline)),
+        },
+    }
+    base["formations"] = formations_payload
+
+    health_timeline = stats_data.get("timeline", {}).get("health", [])
+    if profile == "summary":
+        base["samples"] = {
+            "first_N_health_frames": health_timeline[:10],
+            "last_N_health_frames": health_timeline[-10:] if len(health_timeline) > 10 else health_timeline,
+        }
+        base["timeline"] = {}
+    elif profile == "debug_sampled":
+        sampled = _sample_health_frames(health_timeline, max(sample_stride, 1))
+        features = cfg.get(
+            "series_features",
+            [
+                "reproj_error_m",
+                "delta_H",
+                "tracks_active",
+                "churn_ratio",
+                "ball_detected",
+                "possession_state",
+                "max_player_speed_mps",
+            ],
+        )
+        series_frames = [h.get("frame_idx") for h in sampled]
+        series = {feat: [h.get(feat) for h in sampled] for feat in features}
+        base["timeline"] = {
+            "health_sampled": sampled,
+            "health_sampling_stride": int(sample_stride),
+            "series_frames": series_frames,
+            "series": series,
+            "health_top_worst": {
+                "reproj_error_m": _topk_health_frames(health_timeline, "reproj_error_m", topk_frames, True),
+                "delta_H": _topk_health_frames(health_timeline, "delta_H", topk_frames, True),
+                "max_player_speed_mps": _topk_health_frames(health_timeline, "max_player_speed_mps", topk_frames, True),
+                "churn_ratio": _topk_health_frames(health_timeline, "churn_ratio", topk_frames, True),
+            },
+            "health_top_best": {
+                "reproj_error_m": _topk_health_frames(health_timeline, "reproj_error_m", topk_frames, False),
+                "delta_H": _topk_health_frames(health_timeline, "delta_H", topk_frames, False),
+                "max_player_speed_mps": _topk_health_frames(health_timeline, "max_player_speed_mps", topk_frames, False),
+                "churn_ratio": _topk_health_frames(health_timeline, "churn_ratio", topk_frames, False),
+            },
+        }
+        base["samples"] = {
+            "first_N_health_frames": health_timeline[:10],
+            "last_N_health_frames": health_timeline[-10:] if len(health_timeline) > 10 else health_timeline,
+        }
+    else:
+        payload = dict(stats_data)
+        payload["export_profile"] = "full"
+        payload["version"] = export_version
+        payload["formations"] = {
+            **formations,
+            "timeline_rle": formations_payload["timeline_rle"],
+            "timeline_rle_total_frames": formations_payload["timeline_rle_total_frames"],
+        }
+        return payload
+
+    heatmap_meta = stats_data.get("scouting_heatmaps", {})
+    if heatmap_meta:
+        base["scouting_heatmaps"] = {
+            "team1": _summarize_heatmap(heatmap_meta.get("team1"), heatmap_shape),
+            "team2": _summarize_heatmap(heatmap_meta.get("team2"), heatmap_shape),
+            "bins_shape": heatmap_meta.get("bins_shape"),
+            "field_dims_m": heatmap_meta.get("field_dims_m"),
+            "bin_size_m": heatmap_meta.get("bin_size_m"),
+            "total_samples": heatmap_meta.get("total_samples"),
+            "sample_rate": heatmap_meta.get("sample_rate"),
+        }
+
+    return base
 
 
 def extract_color_features(frame: np.ndarray, bbox: np.ndarray) -> Dict[str, np.ndarray]:
@@ -549,7 +753,11 @@ def process_video(
     full_field_approx: bool = False,
     progress_callback=None,
     enable_possession: bool = False,
-    disable_inertia: bool = False
+    disable_inertia: bool = False,
+    export_profile: str = EXPORT_PROFILE,
+    sample_stride: int = SAMPLE_STRIDE,
+    topk_frames: int = TOPK_FRAMES,
+    enable_compression: bool = ENABLE_COMPRESSION
 ):
     """
     Procesa video completo con detección y tracking mejorado usando múltiples modelos.
@@ -664,6 +872,9 @@ def process_video(
         'homography_mode': [],
         'reproj_error': [],
         'delta_H': [],
+        'delta_H_raw_export': [],
+        'delta_H_smoothed': [],
+        'homography_state': [],
         'inlier_ratio': [],
         'team1_centroid_x': [],
         'team1_centroid_y': [],
@@ -690,10 +901,16 @@ def process_video(
     last_good_H = None
     last_good_age_frames = None
     delta_h_window = deque(maxlen=5)
+    delta_h_smoothed_prev = None
     cut_streak = 0
     cut_cooldown = 0
-    team_direction = {'team1': None, 'team2': None}
-    team_centroid_history = {'team1': deque(maxlen=30), 'team2': deque(maxlen=30)}
+    team_attack_direction = {'team1': None, 'team2': None}
+    direction_confidence = None
+    direction_frames_used = 0
+    stable_centroid_history = {
+        'team1': deque(maxlen=N_DIR_FRAMES),
+        'team2': deque(maxlen=N_DIR_FRAMES)
+    }
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1156,8 +1373,6 @@ def process_video(
                                 target_points = pitch_config.get_keypoints_from_ids(valid_indices)
                                 valid_confidences = keypoints_conf[valid_kp_mask][mapped_indices_mask]
                                 homography_manager.update(valid_keypoints, target_points, valid_confidences, (width, height))
-                                if homography_manager.cut_detected:
-                                    homography_manager.start_reacquire()
                                 transformer = homography_manager.get_transformer()
                     except Exception as e:
                         if frame_count % 100 == 0:
@@ -1190,24 +1405,16 @@ def process_video(
                     transformer = ViewTransformer(source_points, target_points)
                     homography_manager.last_state = "FULLSCREEN"
                     homography_manager.mode = "FALLBACK"
+                    homography_manager.homography_state = "FALLBACK"
                     if frame_count % 100 == 0:
                         print("fallback full-screen")
 
                 # Si tenemos un transformer válido, proyectamos y dibujamos
-                homography_state = getattr(homography_manager, 'last_state', "")
-                hm_mode = getattr(homography_manager, 'mode', "fallback")
-                if hm_mode == "ACQUIRE":
-                    homography_mode = "acquire"
-                elif hm_mode == "TRACK":
-                    homography_mode = "tracking"
-                elif hm_mode == "INERTIA":
-                    homography_mode = "inertia"
-                elif hm_mode == "REACQUIRE":
-                    homography_mode = "reacquire"
-                else:
-                    homography_mode = "fallback"
-                if homography_state:
-                    spread_ok = homography_state != "INVALID_SPREAD"
+                homography_state = getattr(homography_manager, 'homography_state', "FALLBACK")
+                homography_mode = homography_state
+                homography_last_state = getattr(homography_manager, 'last_state', "")
+                if homography_last_state:
+                    spread_ok = homography_last_state != "INVALID_SPREAD"
                 reproj_error_m_pre = getattr(homography_manager, 'last_reproj_error', None)
                 inlier_ratio_pre = getattr(homography_manager, 'last_inlier_ratio', None)
                 reproj_nan_pre = False
@@ -1216,9 +1423,9 @@ def process_video(
                         reproj_nan_pre = bool(np.isnan(reproj_error_m_pre))
                     except Exception:
                         reproj_nan_pre = False
-                invalid_state_pre = bool(homography_state.startswith("INVALID"))
+                invalid_state_pre = bool(homography_last_state.startswith("INVALID"))
                 fallback_usable = (
-                    homography_mode == "fallback"
+                    homography_state == "FALLBACK"
                     and last_good_H is not None
                     and reproj_error_m_pre is not None
                     and not reproj_nan_pre
@@ -1228,11 +1435,19 @@ def process_video(
                 )
                 if transformer is None and fallback_usable:
                     transformer = ViewTransformer(m=last_good_H)
-                    homography_mode = "inertia"
+                    homography_state = "DEGRADED"
                     using_last_good = True
+                metrics_blocked = homography_state != "STABLE" or cut_cooldown > 0
+                blocked_reasons = []
+                if homography_state != "STABLE":
+                    blocked_reasons.append("homography_not_stable")
+                if cut_cooldown > 0:
+                    blocked_reasons.append("cut_cooldown")
                 if transformer:
                     try:
                         points_to_transform = {}
+                        metrics1 = None
+                        metrics2 = None
 
                         def get_bottom_center(dets):
                             return np.column_stack([
@@ -1311,7 +1526,7 @@ def process_video(
                         
                         # --- VELOCIDAD Y DISTANCIA (posesión) ---
                         max_jump_m = None
-                        if speed_estimator is not None:
+                        if not metrics_blocked and speed_estimator is not None:
                             for team_key in ('team1', 'team2'):
                                 mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
                                 if team_key in points_to_transform and any(mask_arr):
@@ -1329,33 +1544,39 @@ def process_video(
                                                     speed_data[tid]['speed_kmh'],
                                                 )
                         speed_samples_mps = []
-                        for team_key in ('team1', 'team2'):
-                            mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
-                            if team_key in points_to_transform and any(mask_arr):
-                                team_dets = tracked_persons[mask_arr]
-                                if team_dets.tracker_id is not None:
-                                    for j, tid in enumerate(team_dets.tracker_id):
-                                        tid = int(tid)
-                                        if track_age.get(tid, 0) < SHORT_TRACK_AGE:
-                                            continue
-                                        pos = points_to_transform[team_key][j]
-                                        if tid not in track_position_history:
-                                            track_position_history[tid] = deque(maxlen=6)
-                                        track_position_history[tid].append(pos.copy())
-                                        if len(track_position_history[tid]) >= 6:
-                                            pos_t = np.median(np.array(list(track_position_history[tid])[-5:]), axis=0)
-                                            pos_t5 = track_position_history[tid][0]
-                                            dist = float(np.linalg.norm(pos_t - pos_t5))
-                                            speed_mps = dist / max(5.0 / max(fps, 1e-6), 1e-6)
-                                            speed_samples_mps.append(speed_mps)
-                                        if tid in prev_field_positions:
-                                            dist_jump = float(np.linalg.norm(pos - prev_field_positions[tid]))
-                                            if max_jump_m is None or dist_jump > max_jump_m:
-                                                max_jump_m = dist_jump
-                                        prev_field_positions[tid] = pos.copy()
+                        if not metrics_blocked:
+                            for team_key in ('team1', 'team2'):
+                                mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
+                                if team_key in points_to_transform and any(mask_arr):
+                                    team_dets = tracked_persons[mask_arr]
+                                    if team_dets.tracker_id is not None:
+                                        for j, tid in enumerate(team_dets.tracker_id):
+                                            tid = int(tid)
+                                            pos = points_to_transform[team_key][j]
+                                            if tid not in track_position_history:
+                                                track_position_history[tid] = deque(maxlen=6)
+                                            track_position_history[tid].append(pos.copy())
+                                            if len(track_position_history[tid]) >= 6:
+                                                pos_t = np.median(np.array(list(track_position_history[tid])[-5:]), axis=0)
+                                                pos_t5 = track_position_history[tid][0]
+                                                dist = float(np.linalg.norm(pos_t - pos_t5))
+                                                speed_mps = dist / max(5.0 / max(fps, 1e-6), 1e-6)
+                                                guarded_speed = TacticalMetricsCalculator.guard_speed(
+                                                    speed_mps, homography_state, track_age.get(tid, 0), SHORT_TRACK_AGE
+                                                )
+                                                if guarded_speed is not None:
+                                                    speed_samples_mps.append(guarded_speed)
+                                            if tid in prev_field_positions:
+                                                dist_jump = float(np.linalg.norm(pos - prev_field_positions[tid]))
+                                                if max_jump_m is None or dist_jump > max_jump_m:
+                                                    max_jump_m = dist_jump
+                                            prev_field_positions[tid] = pos.copy()
                         if speed_samples_mps:
                             max_speed_mps = float(max(speed_samples_mps))
                             speed_violation = max_speed_mps > SPEED_MAX_MPS
+                        elif metrics_blocked:
+                            max_speed_mps = None
+                            speed_violation = False
 
                         # --- Fix C: POSESIÓN EN ESPACIO MÉTRICO ---
                         if possession_tracker is not None:
@@ -1385,25 +1606,42 @@ def process_video(
                             annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
-                        if team1_centroid is not None:
-                            team_centroid_history['team1'].append(team1_centroid[0])
-                        if team2_centroid is not None:
-                            team_centroid_history['team2'].append(team2_centroid[0])
-                        if team_direction['team1'] is None and team_direction['team2'] is None:
-                            if len(team_centroid_history['team1']) >= 15 and len(team_centroid_history['team2']) >= 15:
-                                cx1_avg = float(np.mean(list(team_centroid_history['team1'])))
-                                cx2_avg = float(np.mean(list(team_centroid_history['team2'])))
-                                if cx1_avg < cx2_avg:
-                                    team_direction['team1'] = "right"
-                                    team_direction['team2'] = "left"
+                        if team1_centroid is not None and homography_state == "STABLE" and cut_cooldown == 0:
+                            stable_centroid_history['team1'].append(team1_centroid[0])
+                        if team2_centroid is not None and homography_state == "STABLE" and cut_cooldown == 0:
+                            stable_centroid_history['team2'].append(team2_centroid[0])
+                        if direction_confidence is None:
+                            if len(stable_centroid_history['team1']) >= N_DIR_FRAMES and len(stable_centroid_history['team2']) >= N_DIR_FRAMES:
+                                cx1_vals = list(stable_centroid_history['team1'])
+                                cx2_vals = list(stable_centroid_history['team2'])
+                                cx1_avg = float(np.mean(cx1_vals))
+                                cx2_avg = float(np.mean(cx2_vals))
+                                diff = abs(cx1_avg - cx2_avg)
+                                std1 = float(np.std(cx1_vals))
+                                std2 = float(np.std(cx2_vals))
+                                spread = max(std1 + std2, 1e-6)
+                                diff_norm = diff / 105.0
+                                spread_norm = spread / 105.0
+                                direction_confidence = min(1.0, max(0.0, diff_norm / max(spread_norm, 0.01)))
+                                direction_frames_used = min(len(cx1_vals), len(cx2_vals))
+                                if direction_confidence >= DIR_CONF_MIN:
+                                    if cx1_avg < cx2_avg:
+                                        team_attack_direction['team1'] = "left_to_right"
+                                        team_attack_direction['team2'] = "right_to_left"
+                                    else:
+                                        team_attack_direction['team1'] = "right_to_left"
+                                        team_attack_direction['team2'] = "left_to_right"
                                 else:
-                                    team_direction['team1'] = "left"
-                                    team_direction['team2'] = "right"
-                        t1_dir = team_direction['team1']
-                        t2_dir = team_direction['team2']
+                                    team_attack_direction['team1'] = "unknown"
+                                    team_attack_direction['team2'] = "unknown"
+                        t1_dir = team_attack_direction['team1']
+                        t2_dir = team_attack_direction['team2']
+                        t1_dir_mapped = "right" if t1_dir == "left_to_right" else "left" if t1_dir == "right_to_left" else None
+                        t2_dir_mapped = "right" if t2_dir == "left_to_right" else "left" if t2_dir == "right_to_left" else None
+                        direction_known = bool(direction_confidence is not None and direction_confidence >= DIR_CONF_MIN and t1_dir_mapped is not None and t2_dir_mapped is not None)
 
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
-                            if t1_dir is None:
+                            if metrics_blocked or not direction_known:
                                 formation1 = {
                                     'formation': 'Unknown',
                                     'lines': {'defense': [], 'midfield': [], 'attack': []},
@@ -1414,15 +1652,16 @@ def process_video(
                                     'direction_known': False
                                 }
                             else:
-                                formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir)
+                                formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir_mapped)
                                 formation1['direction_known'] = True
                             formations_timeline['team1'].append(formation1)
 
-                            metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
-                            team1_tracker.update(metrics1, frame_count)
+                            if not metrics_blocked:
+                                metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
+                                team1_tracker.update(metrics1, frame_count)
 
                         if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
-                            if t2_dir is None:
+                            if metrics_blocked or not direction_known:
                                 formation2 = {
                                     'formation': 'Unknown',
                                     'lines': {'defense': [], 'midfield': [], 'attack': []},
@@ -1433,17 +1672,18 @@ def process_video(
                                     'direction_known': False
                                 }
                             else:
-                                formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir)
+                                formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir_mapped)
                                 formation2['direction_known'] = True
                             formations_timeline['team2'].append(formation2)
                             
-                            metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
-                            team2_tracker.update(metrics2, frame_count)
+                            if not metrics_blocked:
+                                metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
+                                team2_tracker.update(metrics2, frame_count)
                         
                         _heatmap_valid_frame_counter += 1
                         last_reproj = getattr(homography_manager, 'last_reproj_error', None)
-                        allow_heatmap = homography_mode == "tracking"
-                        if not allow_heatmap and homography_mode == "inertia":
+                        allow_heatmap = homography_state == "STABLE"
+                        if not allow_heatmap and homography_state == "DEGRADED":
                             allow_heatmap = last_reproj is not None and last_reproj < homography_manager.max_reproj_error
                         if allow_heatmap and _heatmap_valid_frame_counter % heatmap_sample_every == 0:
                             sampled = False
@@ -1473,9 +1713,12 @@ def process_video(
                                 print(f"Frame {frame_count}: Heatmap samples={heatmap_samples_count}")
                             
                         homography_telemetry['frame_number'].append(frame_count)
-                        homography_telemetry['homography_mode'].append(homography_mode)
+                        homography_telemetry['homography_mode'].append(homography_state)
+                        homography_telemetry['homography_state'].append(homography_state)
                         homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
-                        homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                        homography_telemetry['delta_H'].append(None)
+                        homography_telemetry['delta_H_raw_export'].append(None)
+                        homography_telemetry['delta_H_smoothed'].append(None)
                         homography_telemetry['inlier_ratio'].append(getattr(homography_manager, 'last_inlier_ratio', None))
                         homography_telemetry['team1_centroid_x'].append(team1_centroid[0] if team1_centroid else None)
                         homography_telemetry['team1_centroid_y'].append(team1_centroid[1] if team1_centroid else None)
@@ -1513,17 +1756,17 @@ def process_video(
 
                         # Mejora I: calcular línea de offside (penúltimo defensor)
                         radar_offside = {}
-                        if 'team1' in points_to_transform and len(points_to_transform['team1']) >= 2:
+                        if direction_known and 'team1' in points_to_transform and len(points_to_transform['team1']) >= 2:
                             t1_x = np.sort(points_to_transform['team1'][:, 0])
-                            if t1_dir == "right":
+                            if t1_dir_mapped == "right":
                                 radar_offside['team1'] = float(t1_x[1])  # 2do más bajo X
-                            else:
+                            elif t1_dir_mapped == "left":
                                 radar_offside['team1'] = float(t1_x[-2])  # 2do más alto X
-                        if 'team2' in points_to_transform and len(points_to_transform['team2']) >= 2:
+                        if direction_known and 'team2' in points_to_transform and len(points_to_transform['team2']) >= 2:
                             t2_x = np.sort(points_to_transform['team2'][:, 0])
-                            if t2_dir == "right":
+                            if t2_dir_mapped == "right":
                                 radar_offside['team2'] = float(t2_x[1])
-                            else:
+                            elif t2_dir_mapped == "left":
                                 radar_offside['team2'] = float(t2_x[-2])
 
                         radar_view = draw_radar_with_metrics(
@@ -1580,9 +1823,12 @@ def process_video(
                         print(f"Error dibujando radar: {e}")
                 else:
                     homography_telemetry['frame_number'].append(frame_count)
-                    homography_telemetry['homography_mode'].append(homography_mode)
+                    homography_telemetry['homography_mode'].append(homography_state)
+                    homography_telemetry['homography_state'].append(homography_state)
                     homography_telemetry['reproj_error'].append(getattr(homography_manager, 'last_reproj_error', None))
-                    homography_telemetry['delta_H'].append(getattr(homography_manager, 'last_delta', None))
+                    homography_telemetry['delta_H'].append(None)
+                    homography_telemetry['delta_H_raw_export'].append(None)
+                    homography_telemetry['delta_H_smoothed'].append(None)
                     homography_telemetry['inlier_ratio'].append(getattr(homography_manager, 'last_inlier_ratio', None))
                     homography_telemetry['team1_centroid_x'].append(None)
                     homography_telemetry['team1_centroid_y'].append(None)
@@ -1622,8 +1868,8 @@ def process_video(
             short_tracks_ratio = float(short_tracks / tracks_active) if tracks_active > 0 else 0.0
 
             reproj_error_m = getattr(homography_manager, 'last_reproj_error', None)
-            delta_H = getattr(homography_manager, 'last_delta', None)
-            hm = homography_mode
+            delta_H_raw = getattr(homography_manager, 'last_delta', None)
+            hm = homography_state
             hs = "ok"
             h_accept_reason = "invalid"
             reproj_is_nan = False
@@ -1632,14 +1878,14 @@ def process_video(
                     reproj_is_nan = bool(np.isnan(reproj_error_m))
                 except Exception:
                     reproj_is_nan = False
-            homography_state = getattr(homography_manager, 'last_state', "")
-            invalid_state = bool(homography_state.startswith("INVALID"))
+            homography_manager.homography_state = homography_state
+            invalid_state = bool(homography_last_state.startswith("INVALID"))
             inlier_ratio = getattr(homography_manager, 'last_inlier_ratio', None)
             if reproj_error_m is None or reproj_is_nan or (reproj_error_m is not None and reproj_error_m > REPROJ_INVALID) or invalid_state:
                 hs = "invalid"
                 h_accept_reason = "invalid"
             else:
-                if reproj_error_m <= REPROJ_OK_MAX and (delta_H is None or delta_H <= DELTA_H_WARN):
+                if reproj_error_m <= REPROJ_OK_MAX and (delta_H_raw is None or delta_H_raw <= DELTA_H_WARN):
                     hs = "ok"
                     h_accept_reason = "accepted_ok"
                 else:
@@ -1652,38 +1898,46 @@ def process_video(
                         h_accept_reason = "kept_last_good"
                     else:
                         h_accept_reason = "accepted_warn"
-            if delta_H is not None:
-                delta_h_window.append(float(delta_H))
+            if homography_state == "FALLBACK":
+                hs = "invalid"
+                h_accept_reason = "fallback_used"
+            if h_accept_reason in {"accepted_ok", "accepted_warn"} and homography_state not in {"STABLE", "DEGRADED"}:
+                hs = "invalid"
+                h_accept_reason = "invalid"
+            delta_H_raw_export = None
+            delta_h_smoothed = None
+            if delta_H_raw is not None:
+                delta_H_raw_export = float(min(delta_H_raw, DELTA_H_CLAMP_EXPORT))
+                delta_h_input = float(min(delta_H_raw, DELTA_H_CLAMP_SMOOTH))
+                if delta_h_smoothed_prev is None:
+                    delta_h_smoothed = delta_h_input
+                else:
+                    delta_h_smoothed = (1.0 - DELTA_H_ALPHA) * delta_h_smoothed_prev + DELTA_H_ALPHA * delta_h_input
+                delta_h_smoothed_prev = delta_h_smoothed
             if cut_cooldown > 0:
                 cut_cooldown = max(0, cut_cooldown - 1)
                 cut_detected = False
                 cut_streak = 0
             else:
-                delta_h_smoothed = None
-                if len(delta_h_window) > 0:
-                    delta_h_smoothed = float(np.median(np.array(delta_h_window, dtype=np.float32)))
                 if delta_h_smoothed is not None and delta_h_smoothed > DELTA_H_CUT:
                     cut_streak += 1
                 else:
                     cut_streak = 0
-                if cut_streak >= 3:
+                if cut_streak >= CUT_DEBOUNCE_FRAMES:
                     cut_detected = True
-                    cut_cooldown = REACQUIRE_FRAMES
+                    cut_cooldown = CUT_COOLDOWN_FRAMES
                     cut_streak = 0
                     homography_manager.start_reacquire()
                 else:
                     cut_detected = False
             homography_manager.cut_detected = cut_detected
-
-            if h_accept_reason == "accepted_ok":
-                homography_mode_effective = "tracking"
-            elif h_accept_reason in {"accepted_warn", "kept_last_good"}:
-                homography_mode_effective = "inertia"
-            else:
-                homography_mode_effective = "fallback"
-            hm = homography_mode_effective
+            hm = homography_state
             if homography_telemetry['frame_number'] and homography_telemetry['frame_number'][-1] == frame_count:
-                homography_telemetry['homography_mode'][-1] = homography_mode_effective
+                homography_telemetry['homography_mode'][-1] = homography_state
+                homography_telemetry['homography_state'][-1] = homography_state
+                homography_telemetry['delta_H'][-1] = delta_h_smoothed
+                homography_telemetry['delta_H_raw_export'][-1] = delta_H_raw_export
+                homography_telemetry['delta_H_smoothed'][-1] = delta_h_smoothed
 
             formation_label = None
             formation_valid = True
@@ -1722,8 +1976,18 @@ def process_video(
                 if reasons:
                     formation_invalid_reason = ",".join(sorted(set(reasons)))
 
-            frame_valid_for_metrics_strict = bool(hs == "ok" and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
-            frame_valid_for_metrics_demo = bool(hs in {"ok", "warn"} and tracks_active >= MIN_TRACKS_ACTIVE and detections_count >= MIN_DETECTIONS)
+            frame_valid_for_metrics_strict = bool(
+                hs == "ok"
+                and tracks_active >= MIN_TRACKS_ACTIVE
+                and detections_count >= MIN_DETECTIONS
+                and not metrics_blocked
+            )
+            frame_valid_for_metrics_demo = bool(
+                hs in {"ok", "warn"}
+                and tracks_active >= MIN_TRACKS_ACTIVE
+                and detections_count >= MIN_DETECTIONS
+                and not metrics_blocked
+            )
             if hs in {"ok", "warn"} and reproj_error_m is not None and reproj_error_m <= REPROJ_WARN_MAX:
                 if inlier_ratio is None or inlier_ratio >= 0.6:
                     if getattr(homography_manager, 'current_H', None) is not None and not using_last_good:
@@ -1780,9 +2044,10 @@ def process_video(
                 else:
                     possession_state = possession_result[0] if isinstance(possession_result, tuple) else possession_result
 
+            delta_H = delta_h_smoothed
             health_timeline.append({
                 'frame_idx': int(frame_count),
-                'homography_mode': str(hm),
+                'homography_mode': str(homography_state),
                 'reproj_error_m': None if reproj_error_m is None else float(reproj_error_m),
                 'delta_H': None if delta_H is None else float(delta_H),
                 'homography_status': hs,
@@ -1823,9 +2088,9 @@ def process_video(
                 frame_qc_samples.append({
                     'frame': frame_count,
                     't': float(frame_count / fps) if fps > 0 else 0.0,
-                    'homography_mode': homography_mode,
+                    'homography_mode': homography_state,
                     'reproj_error': getattr(homography_manager, 'last_reproj_error', None),
-                    'delta_H': getattr(homography_manager, 'last_delta', None),
+                    'delta_H': delta_h_smoothed,
                     'spread_ok': spread_ok,
                     'n_team1': int(np.sum(team1_mask)) if len(team1_mask) > 0 else 0,
                     'n_team2': int(np.sum(team2_mask)) if len(team2_mask) > 0 else 0,
@@ -1969,10 +2234,10 @@ def process_video(
             arr = np.array(deltas, dtype=np.float32)
             return float(np.mean(arr)), float(np.percentile(arr, 95))
 
-        hm_modes = homography_telemetry['homography_mode']
-        homography_tracking_frames = int(np.sum([m == 'tracking' for m in hm_modes]))
-        homography_inertia_frames = int(np.sum([m == 'inertia' for m in hm_modes]))
-        homography_fallback_frames = int(np.sum([m == 'fallback' for m in hm_modes]))
+        hm_states = homography_telemetry['homography_state'] if homography_telemetry.get('homography_state') else homography_telemetry['homography_mode']
+        homography_tracking_frames = int(np.sum([m == 'STABLE' for m in hm_states]))
+        homography_inertia_frames = int(np.sum([m == 'DEGRADED' for m in hm_states]))
+        homography_fallback_frames = int(np.sum([m in {'FALLBACK', 'REACQUIRE', 'WARMUP'} for m in hm_states]))
         homography_valid_frames = homography_tracking_frames + homography_inertia_frames
         homography_valid_ratio = float(homography_valid_frames / frame_count) if frame_count > 0 else 0.0
         avg_reproj_error = _safe_mean(homography_telemetry['reproj_error'])
@@ -2127,7 +2392,7 @@ def process_video(
                 'fps': fps,
                 'homography_valid_frames': homography_valid_frames,
                 'homography_inertia_frames': homography_inertia_frames,
-                'homography_fallback_frames': invalid_frames,
+                'homography_fallback_frames': homography_fallback_frames,
                 'homography_valid_ratio': homography_valid_ratio,
                 'avg_reproj_error': avg_reproj_error,
                 'avg_delta_H': avg_delta_H,
@@ -2224,11 +2489,23 @@ def process_video(
         if speed_estimator is not None:
             stats_data['speed_distance'] = speed_estimator.get_summary_stats()
 
+        export_cfg = {
+            "sample_stride": sample_stride,
+            "topk_frames": topk_frames,
+            "topk_formations": 5,
+            "version": "telemetry_export_v1",
+            "heatmap_downsample_shape": (20, 20),
+        }
+        payload = build_export_payload(stats_data, export_profile, export_cfg)
+        payload_converted = convert_to_native_types(payload)
+        payload_json = json.dumps(payload_converted, indent=2)
         stats_path = Path(target_path).parent / f"{Path(target_path).stem}_stats.json"
         with open(stats_path, 'w') as f:
-            # Convertir tipos de NumPy a tipos nativos de Python
-            stats_data_converted = convert_to_native_types(stats_data)
-            json.dump(stats_data_converted, f, indent=2)
+            f.write(payload_json)
+        if enable_compression:
+            gz_path = stats_path.with_suffix(stats_path.suffix + ".gz")
+            with gzip.open(gz_path, 'wt', encoding="utf-8") as f:
+                f.write(payload_json)
         print(f"Estadísticas guardadas en: {stats_path}")
 
     finally:

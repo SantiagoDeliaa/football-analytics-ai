@@ -62,6 +62,16 @@ class TacticalMetricsCalculator:
             'num_players': len(positions)
         }
 
+    @staticmethod
+    def guard_speed(speed_mps: Optional[float], homography_state: str, track_age: int, short_track_age: int) -> Optional[float]:
+        if speed_mps is None:
+            return None
+        if homography_state != "STABLE":
+            return None
+        if track_age < short_track_age:
+            return None
+        return float(speed_mps)
+
     def calculate_block_compactness(self, positions: np.ndarray) -> Dict:
         if len(positions) < 2:
             return {'depth_m': 0.0, 'width_m': 0.0, 'area_m2': 0.0}
