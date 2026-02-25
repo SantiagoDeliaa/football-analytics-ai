@@ -17,6 +17,7 @@ from src.utils.quality_config import (
     REPROJ_INVALID,
     DELTA_H_WARN,
     DELTA_H_CUT,
+    REACQUIRE_FRAMES,
     MIN_TRACKS_ACTIVE,
     MIN_DETECTIONS,
     SHORT_TRACK_AGE,
@@ -676,8 +677,11 @@ def process_video(
     prev_track_ids = set()
     ball_track_age_map = {}
     prev_field_positions = {}
+    track_position_history = {}
     max_speed_mps_list = []
     speed_violation_flags = []
+    max_speed_mps_strict_list = []
+    speed_violation_strict_flags = []
     max_jump_m_list = []
     jump_violation_flags = []
     churn_ratio_list = []
@@ -685,6 +689,11 @@ def process_video(
     frame_valid_strict_flags = []
     last_good_H = None
     last_good_age_frames = None
+    delta_h_window = deque(maxlen=5)
+    cut_streak = 0
+    cut_cooldown = 0
+    team_direction = {'team1': None, 'team2': None}
+    team_centroid_history = {'team1': deque(maxlen=30), 'team2': deque(maxlen=30)}
 
     # Inicializar módulos tácticos
     formation_detector = FormationDetector()
@@ -1301,7 +1310,6 @@ def process_video(
                                 points_to_transform['ball'] = raw_ball_pos
                         
                         # --- VELOCIDAD Y DISTANCIA (posesión) ---
-                        speeds_kmh_frame = []
                         max_jump_m = None
                         if speed_estimator is not None:
                             for team_key in ('team1', 'team2'):
@@ -1314,16 +1322,13 @@ def process_video(
                                             points_to_transform[team_key],
                                             [team_key] * len(team_dets),
                                         )
-                                        for tid, data in speed_data.items():
-                                            speed_kmh = data.get('speed_kmh')
-                                            if speed_kmh is not None:
-                                                speeds_kmh_frame.append(float(speed_kmh))
                                         for j, tid in enumerate(team_dets.tracker_id):
                                             if tid in speed_data and speed_data[tid]['speed_kmh'] > 2.0:
                                                 annotated_frame = speed_estimator.draw_player_speed(
                                                     annotated_frame, tid, team_dets.xyxy[j],
                                                     speed_data[tid]['speed_kmh'],
                                                 )
+                        speed_samples_mps = []
                         for team_key in ('team1', 'team2'):
                             mask_arr = np.array(team1_mask if team_key == 'team1' else team2_mask)
                             if team_key in points_to_transform and any(mask_arr):
@@ -1331,14 +1336,25 @@ def process_video(
                                 if team_dets.tracker_id is not None:
                                     for j, tid in enumerate(team_dets.tracker_id):
                                         tid = int(tid)
+                                        if track_age.get(tid, 0) < SHORT_TRACK_AGE:
+                                            continue
                                         pos = points_to_transform[team_key][j]
+                                        if tid not in track_position_history:
+                                            track_position_history[tid] = deque(maxlen=6)
+                                        track_position_history[tid].append(pos.copy())
+                                        if len(track_position_history[tid]) >= 6:
+                                            pos_t = np.median(np.array(list(track_position_history[tid])[-5:]), axis=0)
+                                            pos_t5 = track_position_history[tid][0]
+                                            dist = float(np.linalg.norm(pos_t - pos_t5))
+                                            speed_mps = dist / max(5.0 / max(fps, 1e-6), 1e-6)
+                                            speed_samples_mps.append(speed_mps)
                                         if tid in prev_field_positions:
-                                            dist = float(np.linalg.norm(pos - prev_field_positions[tid]))
-                                            if max_jump_m is None or dist > max_jump_m:
-                                                max_jump_m = dist
+                                            dist_jump = float(np.linalg.norm(pos - prev_field_positions[tid]))
+                                            if max_jump_m is None or dist_jump > max_jump_m:
+                                                max_jump_m = dist_jump
                                         prev_field_positions[tid] = pos.copy()
-                        if speeds_kmh_frame:
-                            max_speed_mps = float(max(speeds_kmh_frame) / 3.6)
+                        if speed_samples_mps:
+                            max_speed_mps = float(max(speed_samples_mps))
                             speed_violation = max_speed_mps > SPEED_MAX_MPS
 
                         # --- Fix C: POSESIÓN EN ESPACIO MÉTRICO ---
@@ -1369,29 +1385,56 @@ def process_video(
                             annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
-                        # Fix D: auto-detectar dirección de ataque por centroide
-                        t1_dir = "right"
-                        t2_dir = "right"
-                        if 'team1' in points_to_transform and 'team2' in points_to_transform:
-                            if len(points_to_transform['team1']) > 0 and len(points_to_transform['team2']) > 0:
-                                cx1 = float(np.mean(points_to_transform['team1'][:, 0]))
-                                cx2 = float(np.mean(points_to_transform['team2'][:, 0]))
-                                if cx1 < cx2:
-                                    t1_dir = "right"
-                                    t2_dir = "left"
+                        if team1_centroid is not None:
+                            team_centroid_history['team1'].append(team1_centroid[0])
+                        if team2_centroid is not None:
+                            team_centroid_history['team2'].append(team2_centroid[0])
+                        if team_direction['team1'] is None and team_direction['team2'] is None:
+                            if len(team_centroid_history['team1']) >= 15 and len(team_centroid_history['team2']) >= 15:
+                                cx1_avg = float(np.mean(list(team_centroid_history['team1'])))
+                                cx2_avg = float(np.mean(list(team_centroid_history['team2'])))
+                                if cx1_avg < cx2_avg:
+                                    team_direction['team1'] = "right"
+                                    team_direction['team2'] = "left"
                                 else:
-                                    t1_dir = "left"
-                                    t2_dir = "right"
+                                    team_direction['team1'] = "left"
+                                    team_direction['team2'] = "right"
+                        t1_dir = team_direction['team1']
+                        t2_dir = team_direction['team2']
 
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
-                            formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir)
+                            if t1_dir is None:
+                                formation1 = {
+                                    'formation': 'Unknown',
+                                    'lines': {'defense': [], 'midfield': [], 'attack': []},
+                                    'confidence': 0.0,
+                                    'players_per_line': None,
+                                    'total_players': int(len(points_to_transform['team1'])),
+                                    'attacking_direction': None,
+                                    'direction_known': False
+                                }
+                            else:
+                                formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir)
+                                formation1['direction_known'] = True
                             formations_timeline['team1'].append(formation1)
 
                             metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
                             team1_tracker.update(metrics1, frame_count)
 
                         if 'team2' in points_to_transform and len(points_to_transform['team2']) > 0:
-                            formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir)
+                            if t2_dir is None:
+                                formation2 = {
+                                    'formation': 'Unknown',
+                                    'lines': {'defense': [], 'midfield': [], 'attack': []},
+                                    'confidence': 0.0,
+                                    'players_per_line': None,
+                                    'total_players': int(len(points_to_transform['team2'])),
+                                    'attacking_direction': None,
+                                    'direction_known': False
+                                }
+                            else:
+                                formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir)
+                                formation2['direction_known'] = True
                             formations_timeline['team2'].append(formation2)
                             
                             metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
@@ -1563,6 +1606,9 @@ def process_video(
             for tid in list(prev_field_positions.keys()):
                 if tid not in current_ids:
                     del prev_field_positions[tid]
+            for tid in list(track_position_history.keys()):
+                if tid not in current_ids:
+                    del track_position_history[tid]
 
             detections_count = int(len(player_detections)) if player_detections is not None else 0
             tracks_active = int(len(track_age))
@@ -1606,7 +1652,38 @@ def process_video(
                         h_accept_reason = "kept_last_good"
                     else:
                         h_accept_reason = "accepted_warn"
-            cut_detected = bool(getattr(homography_manager, 'cut_detected', False))
+            if delta_H is not None:
+                delta_h_window.append(float(delta_H))
+            if cut_cooldown > 0:
+                cut_cooldown = max(0, cut_cooldown - 1)
+                cut_detected = False
+                cut_streak = 0
+            else:
+                delta_h_smoothed = None
+                if len(delta_h_window) > 0:
+                    delta_h_smoothed = float(np.median(np.array(delta_h_window, dtype=np.float32)))
+                if delta_h_smoothed is not None and delta_h_smoothed > DELTA_H_CUT:
+                    cut_streak += 1
+                else:
+                    cut_streak = 0
+                if cut_streak >= 3:
+                    cut_detected = True
+                    cut_cooldown = REACQUIRE_FRAMES
+                    cut_streak = 0
+                    homography_manager.start_reacquire()
+                else:
+                    cut_detected = False
+            homography_manager.cut_detected = cut_detected
+
+            if h_accept_reason == "accepted_ok":
+                homography_mode_effective = "tracking"
+            elif h_accept_reason in {"accepted_warn", "kept_last_good"}:
+                homography_mode_effective = "inertia"
+            else:
+                homography_mode_effective = "fallback"
+            hm = homography_mode_effective
+            if homography_telemetry['frame_number'] and homography_telemetry['frame_number'][-1] == frame_count:
+                homography_telemetry['homography_mode'][-1] = homography_mode_effective
 
             formation_label = None
             formation_valid = True
@@ -1621,6 +1698,10 @@ def process_video(
                 flags = []
                 for form in (t1_form, t2_form):
                     if isinstance(form, dict):
+                        if form.get('direction_known') is False:
+                            reasons.append("unknown_direction")
+                            flags.append(False)
+                            continue
                         ppl = form.get('players_per_line')
                         total = form.get('total_players')
                         if isinstance(ppl, list) and total is not None:
@@ -1656,6 +1737,13 @@ def process_video(
             if max_speed_mps is not None:
                 max_speed_mps_list.append(max_speed_mps)
                 speed_violation_flags.append(bool(speed_violation))
+            max_speed_mps_strict = None
+            speed_violation_strict = None
+            if max_speed_mps is not None and hs == "ok" and not cut_detected:
+                max_speed_mps_strict = max_speed_mps
+                speed_violation_strict = bool(max_speed_mps_strict > SPEED_MAX_MPS)
+                max_speed_mps_strict_list.append(max_speed_mps_strict)
+                speed_violation_strict_flags.append(speed_violation_strict)
             jump_violation = False
             if max_jump_m is not None:
                 jump_violation = bool(max_jump_m > JUMP_MAX_M and not cut_detected)
@@ -1665,10 +1753,13 @@ def process_video(
             possession_state = "unknown"
             contested_reason = None
             if possession_tracker is not None:
-                if possession_result is None:
+                if not ball_detected:
+                    possession_state = "unknown"
+                    contested_reason = "no_ball"
+                elif possession_result is None:
                     possession_state = "contested"
                     ball_far = False
-                    if ball_detected and len(tracked_persons) > 0 and (any(team1_mask) or any(team2_mask)):
+                    if len(tracked_persons) > 0 and (any(team1_mask) or any(team2_mask)):
                         player_mask = np.array(team1_mask) | np.array(team2_mask)
                         player_dets = tracked_persons[player_mask]
                         if len(player_dets) > 0:
@@ -1680,9 +1771,7 @@ def process_video(
                                 min_dist = float(np.min(dists))
                                 max_dist = getattr(possession_tracker, "max_distance", 70.0)
                                 ball_far = min_dist > max_dist
-                    if not ball_detected:
-                        contested_reason = "no_ball"
-                    elif ball_conf is not None and ball_conf < 0.2:
+                    if ball_conf is not None and ball_conf < 0.2:
                         contested_reason = "low_ball_conf"
                     elif ball_far:
                         contested_reason = "ball_far_from_players"
@@ -1697,6 +1786,7 @@ def process_video(
                 'reproj_error_m': None if reproj_error_m is None else float(reproj_error_m),
                 'delta_H': None if delta_H is None else float(delta_H),
                 'homography_status': hs,
+                'H_accept_reason': h_accept_reason,
                 'cut_detected': cut_detected,
                 'detections_count': detections_count,
                 'tracks_active': tracks_active,
@@ -1713,6 +1803,8 @@ def process_video(
                 'contested_reason': contested_reason,
                 'max_player_speed_mps': None if max_speed_mps is None else float(max_speed_mps),
                 'speed_violation': bool(speed_violation) if max_speed_mps is not None else None,
+                'max_player_speed_mps_strict': None if max_speed_mps_strict is None else float(max_speed_mps_strict),
+                'speed_violation_strict': speed_violation_strict,
                 'max_player_jump_m': None if max_jump_m is None else float(max_jump_m),
                 'jump_violation': bool(jump_violation) if max_jump_m is not None else None,
                 'avg_track_age': avg_track_age,
@@ -1956,17 +2048,26 @@ def process_video(
         speed_violation_ratio = None
         if len(speed_violation_flags) > 0:
             speed_violation_ratio = float(np.sum(speed_violation_flags) / len(speed_violation_flags))
+        avg_max_speed_mps_strict = _safe_mean(max_speed_mps_strict_list)
+        p95_max_speed_mps_strict = _safe_p95(max_speed_mps_strict_list)
+        speed_violation_ratio_strict = None
+        if len(speed_violation_strict_flags) > 0:
+            speed_violation_ratio_strict = float(np.sum(speed_violation_strict_flags) / len(speed_violation_strict_flags))
         avg_max_jump_m = _safe_mean(max_jump_m_list)
         p95_max_jump_m = _safe_p95(max_jump_m_list)
         jump_violation_ratio = None
         if len(jump_violation_flags) > 0:
             jump_violation_ratio = float(np.sum(jump_violation_flags) / len(jump_violation_flags))
+        ball_detected_ratio = None
+        if frame_count > 0:
+            ball_detected_ratio = float(np.sum([1 for h in health_timeline if h.get('ball_detected')]) / frame_count)
+        ball_track_age_p95 = _safe_p95([h.get('ball_track_age') for h in health_timeline])
         p95_reproj_error_m = _safe_p95(homography_telemetry['reproj_error'])
         p95_delta_H = _safe_p95(homography_telemetry['delta_H'])
         invalid_ratio = float(1.0 - (valid_frames_demo / frame_count)) if frame_count > 0 else 0.0
         strict_invalid_ratio = float(1.0 - (valid_frames_strict / frame_count)) if frame_count > 0 else 0.0
         warn_ratio = float(warn_frames / frame_count) if frame_count > 0 else 0.0
-        fallback_ratio_health = float(fallback_frames / frame_count) if frame_count > 0 else 0.0
+        fallback_ratio_health = float(invalid_frames / frame_count) if frame_count > 0 else 0.0
         invalid_formation_ratio = float(invalid_formation_frames / frame_count) if frame_count > 0 else 0.0
         team1_stats['valid_frames'] = valid_frames_demo
         team2_stats['valid_frames'] = valid_frames_demo
@@ -1991,7 +2092,20 @@ def process_video(
             'timeline': {
                 'team1': team1_tracker.export_to_dict(),
                 'team2': team2_tracker.export_to_dict(),
-                'health': health_timeline
+                'health': health_timeline,
+                'samples_10_frames': [
+                    {
+                        'frame_idx': int(h.get('frame_idx')),
+                        'homography_mode': h.get('homography_mode'),
+                        'H_accept_reason': h.get('H_accept_reason') if 'H_accept_reason' in h else None,
+                        'cut_detected': h.get('cut_detected'),
+                        'speed_mps': h.get('max_player_speed_mps'),
+                        'ball_detected': h.get('ball_detected'),
+                        'possession_state': h.get('possession_state'),
+                        'formation_valid': h.get('formation_valid'),
+                    }
+                    for h in health_timeline[:10]
+                ]
             },
             'scouting_heatmaps': {
                 'team1': heatmap_list_team1,
@@ -2013,7 +2127,7 @@ def process_video(
                 'fps': fps,
                 'homography_valid_frames': homography_valid_frames,
                 'homography_inertia_frames': homography_inertia_frames,
-                'homography_fallback_frames': homography_fallback_frames,
+                'homography_fallback_frames': invalid_frames,
                 'homography_valid_ratio': homography_valid_ratio,
                 'avg_reproj_error': avg_reproj_error,
                 'avg_delta_H': avg_delta_H,
@@ -2066,16 +2180,47 @@ def process_video(
                 'avg_max_speed_mps': avg_max_speed_mps,
                 'p95_max_speed_mps': p95_max_speed_mps,
                 'speed_violation_ratio': speed_violation_ratio,
+                'avg_max_speed_mps_strict': avg_max_speed_mps_strict,
+                'p95_max_speed_mps_strict': p95_max_speed_mps_strict,
+                'speed_violation_ratio_strict': speed_violation_ratio_strict,
                 'avg_max_jump_m': avg_max_jump_m,
                 'p95_max_jump_m': p95_max_jump_m,
-                'jump_violation_ratio': jump_violation_ratio
+                'jump_violation_ratio': jump_violation_ratio,
+                'ball_detected_ratio': ball_detected_ratio,
+                'ball_track_age_p95': ball_track_age_p95
             },
             'frame_qc_samples': frame_qc_samples
         }
 
         # --- ESTADÍSTICAS DE POSESIÓN ---
         if possession_tracker is not None:
-            stats_data['possession'] = possession_tracker.get_stats_dict()
+            possession_ready = bool(
+                ball_detected_ratio is not None
+                and ball_detected_ratio > 0.3
+                and (ball_track_age_p95 or 0) > 10
+            )
+            if possession_ready:
+                possession_stats = possession_tracker.get_stats_dict()
+                possession_stats['demo_ready'] = True
+                stats_data['possession'] = possession_stats
+            else:
+                stats_data['possession'] = {
+                    "team1_possession_pct": 0.0,
+                    "team2_possession_pct": 0.0,
+                    "total_possession_frames": 0,
+                    "contested_frames": 0,
+                    "total_frames_analyzed": 0,
+                    "top_possessors": [],
+                    "passes": {
+                        "team1_passes": 0,
+                        "team2_passes": 0,
+                        "turnovers": 0,
+                        "total": 0,
+                    },
+                    "timeline": [],
+                    "demo_ready": False,
+                    "reason": "insufficient_ball"
+                }
         if speed_estimator is not None:
             stats_data['speed_distance'] = speed_estimator.get_summary_stats()
 
