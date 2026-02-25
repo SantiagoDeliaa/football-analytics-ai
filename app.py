@@ -24,6 +24,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib import colors
+from src.utils.metric_formatting import format_metric_mean, format_metric_range
 
 def draw_pitch_base(width_px: int, height_px: int) -> np.ndarray:
     pitch = np.zeros((height_px, width_px, 3), dtype=np.uint8)
@@ -714,14 +715,14 @@ if uploaded_video:
                 comparison_data = {
                     'Métrica': ['Presión (m)', 'Amplitud (m)', 'Compactación (m²)'],
                     'Team 1': [
-                        f"{metrics1.get('pressure_height', {}).get('mean', 0):.1f}",
-                        f"{metrics1.get('offensive_width', {}).get('mean', 0):.1f}",
-                        f"{metrics1.get('compactness', {}).get('mean', 0):.0f}"
+                        format_metric_mean(metrics1.get('pressure_height'), 1),
+                        format_metric_mean(metrics1.get('offensive_width'), 1),
+                        format_metric_mean(metrics1.get('compactness'), 0)
                     ],
                     'Team 2': [
-                        f"{metrics2.get('pressure_height', {}).get('mean', 0):.1f}",
-                        f"{metrics2.get('offensive_width', {}).get('mean', 0):.1f}",
-                        f"{metrics2.get('compactness', {}).get('mean', 0):.0f}"
+                        format_metric_mean(metrics2.get('pressure_height'), 1),
+                        format_metric_mean(metrics2.get('offensive_width'), 1),
+                        format_metric_mean(metrics2.get('compactness'), 0)
                     ]
                 }
 
@@ -737,18 +738,20 @@ if uploaded_video:
                         if metrics1:
                             for metric_name, values in metrics1.items():
                                 if isinstance(values, dict) and 'mean' in values:
+                                    mean_text, min_text, max_text = format_metric_range(values, 2)
                                     st.text(f"{metric_name}:")
-                                    st.text(f"  Media: {values['mean']:.2f}")
-                                    st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
+                                    st.text(f"  Media: {mean_text}")
+                                    st.text(f"  Min-Max: {min_text} - {max_text}")
 
                     with col_det2:
                         st.markdown("#### Team 2")
                         if metrics2:
                             for metric_name, values in metrics2.items():
                                 if isinstance(values, dict) and 'mean' in values:
+                                    mean_text, min_text, max_text = format_metric_range(values, 2)
                                     st.text(f"{metric_name}:")
-                                    st.text(f"  Media: {values['mean']:.2f}")
-                                    st.text(f"  Min-Max: {values['min']:.2f} - {values['max']:.2f}")
+                                    st.text(f"  Media: {mean_text}")
+                                    st.text(f"  Min-Max: {min_text} - {max_text}")
 
         else:
             st.info("📊 Las estadísticas aparecerán aquí después de procesar el video")

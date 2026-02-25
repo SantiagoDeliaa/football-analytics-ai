@@ -15,5 +15,6 @@ plotly>=5.18.0
 pandas>=2.0.0
 matplotlib>=3.8.0
 reportlab>=4.1.0
+pytest>=8.0.0
 # Instalacion directa de sports
 git+https://github.com/roboflow/sports.git
