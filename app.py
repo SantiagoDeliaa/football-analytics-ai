@@ -450,8 +450,8 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
 
 st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_sidebar_state="expanded")
 
-st.title("⚽ Soccer Analytics AI")
-st.caption("Análisis táctico completo: Tracking, Formaciones y Métricas de Comportamiento Colectivo")
+st.title("Football Analytics AI")
+st.caption("Análisis táctico completo: tracking, estadísticas y métricas de comportamiento")
 
 # === SIDEBAR CONFIGURATION ===
 st.sidebar.header("⚙️ Configuración")
@@ -672,6 +672,8 @@ if uploaded_video:
             stats = st.session_state.stats
 
             st.subheader("📊 Análisis Táctico")
+            if stats.get('health_summary', {}).get('demo_mode') == "degraded":
+                st.warning("Demo degradado: métricas aproximadas (homografía no estable).")
 
             # Summary metrics
             col1, col2, col3 = st.columns(3)
@@ -762,57 +764,78 @@ if uploaded_video:
             st.subheader("📈 Evolución Temporal")
 
             timeline = st.session_state.stats['timeline']
+            def filter_series(frames, values):
+                if not frames or not values:
+                    return [], []
+                pairs = [(f, v) for f, v in zip(frames, values) if v is not None]
+                if not pairs:
+                    return [], []
+                f_vals, v_vals = zip(*pairs)
+                return list(f_vals), list(v_vals)
 
             # Pressure Height Chart
             if 'team1' in timeline and 'pressure_height' in timeline['team1']:
-                frames1 = timeline['team1'].get('frame_number', [])
-                pressure1 = timeline['team1'].get('pressure_height', [])
+                frames1_raw = timeline['team1'].get('frame_number', [])
+                pressure1_raw = timeline['team1'].get('pressure_height', [])
 
-                frames2 = timeline.get('team2', {}).get('frame_number', [])
-                pressure2 = timeline.get('team2', {}).get('pressure_height', [])
+                frames2_raw = timeline.get('team2', {}).get('frame_number', [])
+                pressure2_raw = timeline.get('team2', {}).get('pressure_height', [])
 
-                fig_pressure = go.Figure()
-                fig_pressure.add_trace(go.Scatter(x=frames1, y=pressure1, name='Team 1', line=dict(color='green')))
-                fig_pressure.add_trace(go.Scatter(x=frames2, y=pressure2, name='Team 2', line=dict(color='blue')))
-                fig_pressure.update_layout(
-                    title='Altura de Presión (m)',
-                    xaxis_title='Frame',
-                    yaxis_title='Presión (m)',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_pressure, use_container_width=True)
+                frames1, pressure1 = filter_series(frames1_raw, pressure1_raw)
+                frames2, pressure2 = filter_series(frames2_raw, pressure2_raw)
+                if frames1 or frames2:
+                    fig_pressure = go.Figure()
+                    fig_pressure.add_trace(go.Scatter(x=frames1, y=pressure1, name='Team 1', line=dict(color='green')))
+                    fig_pressure.add_trace(go.Scatter(x=frames2, y=pressure2, name='Team 2', line=dict(color='blue')))
+                    fig_pressure.update_layout(
+                        title='Altura de Presión (m)',
+                        xaxis_title='Frame',
+                        yaxis_title='Presión (m)',
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig_pressure, use_container_width=True)
 
             # Compactness Chart
             if 'team1' in timeline and 'compactness' in timeline['team1']:
-                compact1 = timeline['team1'].get('compactness', [])
-                compact2 = timeline.get('team2', {}).get('compactness', [])
+                frames1_raw = timeline['team1'].get('frame_number', [])
+                compact1_raw = timeline['team1'].get('compactness', [])
+                frames2_raw = timeline.get('team2', {}).get('frame_number', [])
+                compact2_raw = timeline.get('team2', {}).get('compactness', [])
 
-                fig_compact = go.Figure()
-                fig_compact.add_trace(go.Scatter(x=frames1, y=compact1, name='Team 1', line=dict(color='green')))
-                fig_compact.add_trace(go.Scatter(x=frames2, y=compact2, name='Team 2', line=dict(color='blue')))
-                fig_compact.update_layout(
-                    title='Compactación (m²)',
-                    xaxis_title='Frame',
-                    yaxis_title='Área (m²)',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_compact, use_container_width=True)
+                frames1, compact1 = filter_series(frames1_raw, compact1_raw)
+                frames2, compact2 = filter_series(frames2_raw, compact2_raw)
+                if frames1 or frames2:
+                    fig_compact = go.Figure()
+                    fig_compact.add_trace(go.Scatter(x=frames1, y=compact1, name='Team 1', line=dict(color='green')))
+                    fig_compact.add_trace(go.Scatter(x=frames2, y=compact2, name='Team 2', line=dict(color='blue')))
+                    fig_compact.update_layout(
+                        title='Compactación (m²)',
+                        xaxis_title='Frame',
+                        yaxis_title='Área (m²)',
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig_compact, use_container_width=True)
 
             # Width Chart
             if 'team1' in timeline and 'offensive_width' in timeline['team1']:
-                width1 = timeline['team1'].get('offensive_width', [])
-                width2 = timeline.get('team2', {}).get('offensive_width', [])
+                frames1_raw = timeline['team1'].get('frame_number', [])
+                width1_raw = timeline['team1'].get('offensive_width', [])
+                frames2_raw = timeline.get('team2', {}).get('frame_number', [])
+                width2_raw = timeline.get('team2', {}).get('offensive_width', [])
 
-                fig_width = go.Figure()
-                fig_width.add_trace(go.Scatter(x=frames1, y=width1, name='Team 1', line=dict(color='green')))
-                fig_width.add_trace(go.Scatter(x=frames2, y=width2, name='Team 2', line=dict(color='blue')))
-                fig_width.update_layout(
-                    title='Amplitud Ofensiva (m)',
-                    xaxis_title='Frame',
-                    yaxis_title='Amplitud (m)',
-                    hovermode='x unified'
-                )
-                st.plotly_chart(fig_width, use_container_width=True)
+                frames1, width1 = filter_series(frames1_raw, width1_raw)
+                frames2, width2 = filter_series(frames2_raw, width2_raw)
+                if frames1 or frames2:
+                    fig_width = go.Figure()
+                    fig_width.add_trace(go.Scatter(x=frames1, y=width1, name='Team 1', line=dict(color='green')))
+                    fig_width.add_trace(go.Scatter(x=frames2, y=width2, name='Team 2', line=dict(color='blue')))
+                    fig_width.update_layout(
+                        title='Amplitud Ofensiva (m)',
+                        xaxis_title='Frame',
+                        yaxis_title='Amplitud (m)',
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig_width, use_container_width=True)
 
         else:
             st.info("📈 Los gráficos aparecerán aquí después de procesar el video con análisis táctico")
