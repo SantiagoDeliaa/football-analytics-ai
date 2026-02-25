@@ -36,6 +36,7 @@ from src.utils.quality_config import (
     SAMPLE_STRIDE,
     TOPK_FRAMES,
     ENABLE_COMPRESSION,
+    DEMO_DEGRADED_ALLOW,
 )
 from ultralytics import YOLO
 
@@ -1437,12 +1438,25 @@ def process_video(
                     transformer = ViewTransformer(m=last_good_H)
                     homography_state = "DEGRADED"
                     using_last_good = True
-                metrics_blocked = homography_state != "STABLE" or cut_cooldown > 0
+                tracks_active_pre = 0
+                if tracked_persons.tracker_id is not None:
+                    try:
+                        tracks_active_pre = int(len(set([int(t) for t in tracked_persons.tracker_id.tolist()])))
+                    except Exception:
+                        tracks_active_pre = 0
+                if not DEMO_DEGRADED_ALLOW:
+                    metrics_blocked = homography_state != "STABLE" or cut_cooldown > 0
+                else:
+                    metrics_blocked = tracks_active_pre < MIN_TRACKS_ACTIVE
                 blocked_reasons = []
-                if homography_state != "STABLE":
-                    blocked_reasons.append("homography_not_stable")
-                if cut_cooldown > 0:
-                    blocked_reasons.append("cut_cooldown")
+                if not DEMO_DEGRADED_ALLOW:
+                    if homography_state != "STABLE":
+                        blocked_reasons.append("homography_not_stable")
+                    if cut_cooldown > 0:
+                        blocked_reasons.append("cut_cooldown")
+                else:
+                    if metrics_blocked:
+                        blocked_reasons.append("tracks_active_below_min")
                 if transformer:
                     try:
                         points_to_transform = {}
@@ -1639,6 +1653,14 @@ def process_video(
                         t1_dir_mapped = "right" if t1_dir == "left_to_right" else "left" if t1_dir == "right_to_left" else None
                         t2_dir_mapped = "right" if t2_dir == "left_to_right" else "left" if t2_dir == "right_to_left" else None
                         direction_known = bool(direction_confidence is not None and direction_confidence >= DIR_CONF_MIN and t1_dir_mapped is not None and t2_dir_mapped is not None)
+                        if homography_state == "FALLBACK":
+                            base_formation_confidence = "low"
+                        elif homography_state == "DEGRADED":
+                            base_formation_confidence = "medium"
+                        else:
+                            base_formation_confidence = "high"
+                        if not direction_known:
+                            base_formation_confidence = "low"
 
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
                             if metrics_blocked or not direction_known:
@@ -1646,6 +1668,7 @@ def process_video(
                                     'formation': 'Unknown',
                                     'lines': {'defense': [], 'midfield': [], 'attack': []},
                                     'confidence': 0.0,
+                                    'formation_confidence': base_formation_confidence,
                                     'players_per_line': None,
                                     'total_players': int(len(points_to_transform['team1'])),
                                     'attacking_direction': None,
@@ -1654,6 +1677,7 @@ def process_video(
                             else:
                                 formation1 = formation_detector.detect_formation(points_to_transform['team1'], team_attacking_direction=t1_dir_mapped)
                                 formation1['direction_known'] = True
+                                formation1['formation_confidence'] = base_formation_confidence
                             formations_timeline['team1'].append(formation1)
 
                             if not metrics_blocked:
@@ -1666,6 +1690,7 @@ def process_video(
                                     'formation': 'Unknown',
                                     'lines': {'defense': [], 'midfield': [], 'attack': []},
                                     'confidence': 0.0,
+                                    'formation_confidence': base_formation_confidence,
                                     'players_per_line': None,
                                     'total_players': int(len(points_to_transform['team2'])),
                                     'attacking_direction': None,
@@ -1674,6 +1699,7 @@ def process_video(
                             else:
                                 formation2 = formation_detector.detect_formation(points_to_transform['team2'], team_attacking_direction=t2_dir_mapped)
                                 formation2['direction_known'] = True
+                                formation2['formation_confidence'] = base_formation_confidence
                             formations_timeline['team2'].append(formation2)
                             
                             if not metrics_blocked:
@@ -1953,8 +1979,6 @@ def process_video(
                 for form in (t1_form, t2_form):
                     if isinstance(form, dict):
                         if form.get('direction_known') is False:
-                            reasons.append("unknown_direction")
-                            flags.append(False)
                             continue
                         ppl = form.get('players_per_line')
                         total = form.get('total_players')
@@ -2044,6 +2068,14 @@ def process_video(
                 else:
                     possession_state = possession_result[0] if isinstance(possession_result, tuple) else possession_result
 
+            if homography_state == "STABLE":
+                metrics_confidence = "high"
+            elif homography_state == "DEGRADED":
+                metrics_confidence = "medium"
+            elif homography_state == "FALLBACK":
+                metrics_confidence = "low"
+            else:
+                metrics_confidence = "low"
             delta_H = delta_h_smoothed
             health_timeline.append({
                 'frame_idx': int(frame_count),
@@ -2074,6 +2106,7 @@ def process_video(
                 'jump_violation': bool(jump_violation) if max_jump_m is not None else None,
                 'avg_track_age': avg_track_age,
                 'short_tracks_ratio': short_tracks_ratio,
+                'metrics_confidence': metrics_confidence,
                 'frame_valid_for_metrics': frame_valid_for_metrics_demo,
                 'frame_valid_for_metrics_demo': frame_valid_for_metrics_demo,
                 'frame_valid_for_metrics_strict': frame_valid_for_metrics_strict,
@@ -2334,6 +2367,7 @@ def process_video(
         warn_ratio = float(warn_frames / frame_count) if frame_count > 0 else 0.0
         fallback_ratio_health = float(invalid_frames / frame_count) if frame_count > 0 else 0.0
         invalid_formation_ratio = float(invalid_formation_frames / frame_count) if frame_count > 0 else 0.0
+        demo_mode = "degraded" if any([h.get('homography_mode') != "STABLE" for h in health_timeline]) else "stable"
         team1_stats['valid_frames'] = valid_frames_demo
         team2_stats['valid_frames'] = valid_frames_demo
         stats_data = {
@@ -2426,6 +2460,7 @@ def process_video(
             },
             'health_summary': {
                 'total_frames': frame_count,
+                'demo_mode': demo_mode,
                 'valid_frames': valid_frames_demo,
                 'valid_frames_strict': valid_frames_strict,
                 'invalid_ratio': invalid_ratio,

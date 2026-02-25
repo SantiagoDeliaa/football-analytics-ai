@@ -66,7 +66,7 @@ class TacticalMetricsCalculator:
     def guard_speed(speed_mps: Optional[float], homography_state: str, track_age: int, short_track_age: int) -> Optional[float]:
         if speed_mps is None:
             return None
-        if homography_state != "STABLE":
+        if homography_state not in {"STABLE", "DEGRADED", "FALLBACK"}:
             return None
         if track_age < short_track_age:
             return None
