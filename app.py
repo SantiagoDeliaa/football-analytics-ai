@@ -8,6 +8,7 @@ from pathlib import Path
 from src.models.load_model import load_roboflow_model
 from src.controllers.process_video import process_video
 from src.utils.config import INPUTS_DIR, OUTPUTS_DIR
+from src.utils.quality_config import EXPORT_PROFILE, SAMPLE_STRIDE, TOPK_FRAMES, ENABLE_COMPRESSION
 from ultralytics import YOLO
 import json
 import pandas as pd
@@ -398,6 +399,10 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
         h = heatmap_meta.get(team_key, None)
         if h is None:
             return None
+        if isinstance(h, dict):
+            h = h.get("downsampled", None)
+            if h is None:
+                return None
         heatmap = np.array(h, dtype=np.float32)
         out_w = 840
         out_h = int(out_w * 68 / 105)
@@ -501,6 +506,21 @@ enable_possession = st.sidebar.checkbox("Habilitar Análisis de Posesión", valu
                                         help="Posesión de pelota, velocidad y distancia por jugador")
 disable_inertia = st.sidebar.checkbox("Modo NO INERCIA (A/B)", value=False,
                                       help="No reutiliza homografía entre frames (max_inertia_frames=0)")
+
+st.sidebar.subheader("4. Export")
+export_profile_options = ["summary", "debug_sampled", "full"]
+default_export_index = export_profile_options.index(EXPORT_PROFILE) if EXPORT_PROFILE in export_profile_options else 1
+export_profile = st.sidebar.selectbox("Perfil de export", export_profile_options, index=default_export_index)
+if export_profile != "summary":
+    sample_stride = st.sidebar.number_input("Stride de muestreo", min_value=1, max_value=60, value=int(SAMPLE_STRIDE), step=1)
+    topk_frames = st.sidebar.number_input("Top K frames", min_value=5, max_value=200, value=int(TOPK_FRAMES), step=5)
+else:
+    sample_stride = int(SAMPLE_STRIDE)
+    topk_frames = int(TOPK_FRAMES)
+if export_profile == "full":
+    enable_compression = st.sidebar.checkbox("Comprimir JSON (.gz)", value=bool(ENABLE_COMPRESSION))
+else:
+    enable_compression = False
 
 pitch_model = None
 full_field_approx = False
@@ -618,7 +638,11 @@ if uploaded_video:
                         full_field_approx=full_field_approx,
                         progress_callback=_on_progress,
                         enable_possession=enable_possession,
-                        disable_inertia=disable_inertia
+                        disable_inertia=disable_inertia,
+                        export_profile=export_profile,
+                        sample_stride=sample_stride,
+                        topk_frames=topk_frames,
+                        enable_compression=enable_compression
                     )
 
                     progress_bar.progress(90)
@@ -1087,21 +1111,39 @@ if uploaded_video:
                 if h1 is not None:
                     st.markdown("#### Heatmap ℹ️")
                     st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
-                    heatmap = np.array(h1, dtype=np.float32)
-                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
-                    combo = np.concatenate([rendered, legend], axis=1)
-                    st.image(combo, caption="Heatmap Team 1", use_column_width=True)
-                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
+                    if isinstance(h1, dict):
+                        h1 = h1.get("downsampled", None)
+                    if h1 is not None:
+                        heatmap = np.array(h1, dtype=np.float32)
+                    else:
+                        heatmap = None
+                    if heatmap is None:
+                        st.warning("Heatmap no disponible para este perfil.")
+                    else:
+                        rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                        combo = np.concatenate([rendered, legend], axis=1)
+                        st.image(combo, caption="Heatmap Team 1", use_column_width=True)
+                    if isinstance(heatmap_meta.get('team1'), dict):
+                        st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
             with col_h2:
                 h2 = heatmap_meta.get('team2', None)
                 if h2 is not None:
                     st.markdown("#### Heatmap ℹ️")
                     st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
-                    heatmap = np.array(h2, dtype=np.float32)
-                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
-                    combo = np.concatenate([rendered, legend], axis=1)
-                    st.image(combo, caption="Heatmap Team 2", use_column_width=True)
-                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
+                    if isinstance(h2, dict):
+                        h2 = h2.get("downsampled", None)
+                    if h2 is not None:
+                        heatmap = np.array(h2, dtype=np.float32)
+                    else:
+                        heatmap = None
+                    if heatmap is None:
+                        st.warning("Heatmap no disponible para este perfil.")
+                    else:
+                        rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                        combo = np.concatenate([rendered, legend], axis=1)
+                        st.image(combo, caption="Heatmap Team 2", use_column_width=True)
+                    if isinstance(heatmap_meta.get('team2'), dict):
+                        st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
         else:
             st.warning("Scouting metrics not available for this video.")
     with tabs[5]:
