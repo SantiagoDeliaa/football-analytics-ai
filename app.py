@@ -46,6 +46,8 @@ def draw_pitch_base(width_px: int, height_px: int) -> np.ndarray:
 
 def render_heatmap_overlay(heatmap_small: np.ndarray, out_w: int, out_h: int, flip_vertical: bool, use_log: bool) -> np.ndarray:
     heatmap = heatmap_small.astype(np.float32)
+    heatmap = np.nan_to_num(heatmap, nan=0.0, posinf=0.0, neginf=0.0)
+    heatmap[heatmap < 0] = 0.0
     if flip_vertical:
         heatmap = np.flipud(heatmap)
     if use_log:
@@ -64,8 +66,9 @@ def render_heatmap_overlay(heatmap_small: np.ndarray, out_w: int, out_h: int, fl
     heatmap_up = cv2.resize(heatmap_uint8, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
     cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_HOT
     heatmap_color = cv2.applyColorMap(heatmap_up, cmap)
-    alpha = (heatmap_up.astype(np.float32) / 255.0) * 0.75
-    alpha[heatmap_up < 10] = 0.0
+    alpha = (heatmap_up.astype(np.float32) / 255.0) * 0.85
+    mask = heatmap_up > 0
+    alpha[mask] = np.maximum(alpha[mask], 0.12)
     alpha_3 = np.dstack([alpha, alpha, alpha])
     pitch = draw_pitch_base(out_w, out_h).astype(np.float32)
     overlay = heatmap_color.astype(np.float32)
@@ -82,6 +85,66 @@ def draw_heatmap_legend(height_px: int, width_px: int = 90) -> np.ndarray:
     cv2.putText(legend, "Presencia", (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
     cv2.putText(legend, "(clip)", (5, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
     return legend
+
+MAX_HUMAN_SPEED_KMH = 36.0
+
+def map_formation_display(raw: str) -> tuple[str, bool]:
+    catalog = {"4-4-2", "4-3-3", "4-2-3-1", "3-5-2", "5-3-2", "4-5-1"}
+    if not raw or not isinstance(raw, str):
+        return "4-4-2 (approx)", True
+    base = raw.strip()
+    if base in catalog:
+        return base, False
+    parts = base.split("-")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return "4-4-2 (approx)", True
+    nums = [int(p) for p in parts]
+    if nums[0] == 0:
+        nums[0] = 4
+        nums[2] = 10 - nums[0] - nums[1]
+    if sum(nums) != 10 or nums[0] <= 0 or nums[1] <= 0 or nums[2] <= 0:
+        return "4-4-2 (approx)", True
+    candidate = f"{nums[0]}-{nums[1]}-{nums[2]}"
+    if candidate in catalog:
+        return f"{candidate} (approx)" if candidate != base else candidate, candidate != base
+    return "4-4-2 (approx)", True
+
+def cap_speed_display(value: float, cap: float = MAX_HUMAN_SPEED_KMH) -> tuple[float, bool]:
+    if value is None:
+        return 0.0, False
+    v = float(value)
+    if v > cap:
+        return cap, True
+    return v, False
+
+def build_centroid_heatmap(telemetry: dict, team_key: str, bins: tuple[int, int] = (26, 17)) -> np.ndarray | None:
+    if not telemetry:
+        return None
+    xs = telemetry.get(f"{team_key}_centroid_x", [])
+    ys = telemetry.get(f"{team_key}_centroid_y", [])
+    if not xs or not ys:
+        return None
+    heatmap = np.zeros((bins[0], bins[1]), dtype=np.float32)
+    for x, y in zip(xs, ys):
+        if x is None or y is None:
+            continue
+        if not (0 <= x <= 105 and 0 <= y <= 68):
+            continue
+        xi = int(x * (bins[0] - 1) / 105)
+        yi = int(y * (bins[1] - 1) / 68)
+        heatmap[xi, yi] += 1.0
+    if np.sum(heatmap) <= 0:
+        return None
+    return heatmap
+
+def filter_series(frames, values):
+    if not frames or not values:
+        return [], []
+    pairs = [(f, v) for f, v in zip(frames, values) if v is not None]
+    if not pairs:
+        return [], []
+    f_vals, v_vals = zip(*pairs)
+    return list(f_vals), list(v_vals)
 
 def format_mmss(seconds: float) -> str:
     minutes = int(seconds) // 60
@@ -398,13 +461,14 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
 
     def heatmap_image(team_key: str):
         h = heatmap_meta.get(team_key, None)
-        if h is None:
-            return None
         if isinstance(h, dict):
             h = h.get("downsampled", None)
-            if h is None:
-                return None
-        heatmap = np.array(h, dtype=np.float32)
+        if h is not None:
+            heatmap = np.array(h, dtype=np.float32)
+        else:
+            heatmap = build_centroid_heatmap(stats_data.get("homography_telemetry", {}), team_key)
+        if heatmap is None:
+            heatmap = np.zeros((26, 17), dtype=np.float32)
         out_w = 840
         out_h = int(out_w * 68 / 105)
         legend = draw_heatmap_legend(out_h)
@@ -452,6 +516,7 @@ st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_side
 
 st.title("Football Analytics AI")
 st.caption("Análisis táctico completo: tracking, estadísticas y métricas de comportamiento")
+st.info("Sistema en beta: algunas métricas pueden ser aproximadas o N/A según la señal.")
 
 # === SIDEBAR CONFIGURATION ===
 st.sidebar.header("⚙️ Configuración")
@@ -696,13 +761,19 @@ if uploaded_video:
 
                 with col_t1:
                     st.markdown("### 🟢 Team 1")
-                    form1 = stats['formations'].get('team1', {}).get('most_common', 'N/A')
-                    st.metric("Formación más común", form1, help="Basada en análisis temporal")
+                    raw_form1 = stats['formations'].get('team1', {}).get('most_common', 'N/A')
+                    display_form1, approx1 = map_formation_display(raw_form1)
+                    st.metric("Formación más común", display_form1, help="Basada en análisis temporal")
+                    if approx1:
+                        st.caption("Aprox. por detección incompleta o fase mixta.")
 
                 with col_t2:
                     st.markdown("### 🔵 Team 2")
-                    form2 = stats['formations'].get('team2', {}).get('most_common', 'N/A')
-                    st.metric("Formación más común", form2, help="Basada en análisis temporal")
+                    raw_form2 = stats['formations'].get('team2', {}).get('most_common', 'N/A')
+                    display_form2, approx2 = map_formation_display(raw_form2)
+                    st.metric("Formación más común", display_form2, help="Basada en análisis temporal")
+                    if approx2:
+                        st.caption("Aprox. por detección incompleta o fase mixta.")
 
             st.divider()
 
@@ -764,14 +835,6 @@ if uploaded_video:
             st.subheader("📈 Evolución Temporal")
 
             timeline = st.session_state.stats['timeline']
-            def filter_series(frames, values):
-                if not frames or not values:
-                    return [], []
-                pairs = [(f, v) for f, v in zip(frames, values) if v is not None]
-                if not pairs:
-                    return [], []
-                f_vals, v_vals = zip(*pairs)
-                return list(f_vals), list(v_vals)
 
             # Pressure Height Chart
             if 'team1' in timeline and 'pressure_height' in timeline['team1']:
@@ -794,6 +857,8 @@ if uploaded_video:
                         hovermode='x unified'
                     )
                     st.plotly_chart(fig_pressure, use_container_width=True)
+                else:
+                    st.info("Sin datos suficientes en este tramo")
 
             # Compactness Chart
             if 'team1' in timeline and 'compactness' in timeline['team1']:
@@ -815,6 +880,8 @@ if uploaded_video:
                         hovermode='x unified'
                     )
                     st.plotly_chart(fig_compact, use_container_width=True)
+                else:
+                    st.info("Sin datos suficientes en este tramo")
 
             # Width Chart
             if 'team1' in timeline and 'offensive_width' in timeline['team1']:
@@ -836,6 +903,8 @@ if uploaded_video:
                         hovermode='x unified'
                     )
                     st.plotly_chart(fig_width, use_container_width=True)
+                else:
+                    st.info("Sin datos suficientes en este tramo")
 
         else:
             st.info("📈 Los gráficos aparecerán aquí después de procesar el video con análisis táctico")
@@ -1049,12 +1118,24 @@ if uploaded_video:
                     left = timeline.get('team1', {}).get('def_line_left_m', [])
                     right = timeline.get('team1', {}).get('def_line_right_m', [])
                     if len(frames) > 0:
-                        x_vals = frames
+                        depth_x, depth_vals = filter_series(frames, depth)
+                        width_x, width_vals = filter_series(frames, width)
+                        left_x, left_vals = filter_series(frames, left)
+                        right_x, right_vals = filter_series(frames, right)
+                        x_vals = depth_x or width_x or left_x or right_x
                         x_title = "Frame"
                         tickvals = None
                         ticktext = None
                         if fps:
-                            x_vals = [f / fps for f in frames]
+                            if depth_x:
+                                depth_x = [f / fps for f in depth_x]
+                            if width_x:
+                                width_x = [f / fps for f in width_x]
+                            if left_x:
+                                left_x = [f / fps for f in left_x]
+                            if right_x:
+                                right_x = [f / fps for f in right_x]
+                            x_vals = depth_x or width_x or left_x or right_x
                             x_title = "Tiempo (mm:ss)"
                             if len(x_vals) > 1:
                                 step = max(1, int(len(x_vals) / 6))
@@ -1063,24 +1144,34 @@ if uploaded_video:
                         st.markdown("#### Compactación ℹ️")
                         st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
                         st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
-                        fig_c = go.Figure()
-                        fig_c.add_trace(go.Scatter(x=x_vals, y=depth, name='Profundidad (m)', line=dict(color='green')))
-                        fig_c.add_trace(go.Scatter(x=x_vals, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
-                        fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
-                        if tickvals:
-                            fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
-                        st.plotly_chart(fig_c, use_container_width=True)
+                        if depth_x or width_x:
+                            fig_c = go.Figure()
+                            if depth_x:
+                                fig_c.add_trace(go.Scatter(x=depth_x, y=depth_vals, name='Profundidad (m)', line=dict(color='green')))
+                            if width_x:
+                                fig_c.add_trace(go.Scatter(x=width_x, y=width_vals, name='Ancho (m)', line=dict(color='darkgreen')))
+                            fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            if tickvals:
+                                fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
+                            st.plotly_chart(fig_c, use_container_width=True)
+                        else:
+                            st.info("Sin datos suficientes en este tramo")
                         st.markdown("#### Línea defensiva ℹ️")
                         st.caption("Qué es: altura del último bloque en X (0–105m).")
                         st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
                         st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
-                        fig_d = go.Figure()
-                        fig_d.add_trace(go.Scatter(x=x_vals, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
-                        fig_d.add_trace(go.Scatter(x=x_vals, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
-                        fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
-                        if tickvals:
-                            fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
-                        st.plotly_chart(fig_d, use_container_width=True)
+                        if left_x or right_x:
+                            fig_d = go.Figure()
+                            if left_x:
+                                fig_d.add_trace(go.Scatter(x=left_x, y=left_vals, name='Línea Izquierda (m)', line=dict(color='blue')))
+                            if right_x:
+                                fig_d.add_trace(go.Scatter(x=right_x, y=right_vals, name='Línea Derecha (m)', line=dict(color='darkblue')))
+                            fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            if tickvals:
+                                fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
+                            st.plotly_chart(fig_d, use_container_width=True)
+                        else:
+                            st.info("Sin datos suficientes en este tramo")
                 with col_t2:
                     st.markdown("### 🔵 Team 2")
                     frames = timeline.get('team2', {}).get('frame_number', [])
@@ -1089,12 +1180,24 @@ if uploaded_video:
                     left = timeline.get('team2', {}).get('def_line_left_m', [])
                     right = timeline.get('team2', {}).get('def_line_right_m', [])
                     if len(frames) > 0:
-                        x_vals = frames
+                        depth_x, depth_vals = filter_series(frames, depth)
+                        width_x, width_vals = filter_series(frames, width)
+                        left_x, left_vals = filter_series(frames, left)
+                        right_x, right_vals = filter_series(frames, right)
+                        x_vals = depth_x or width_x or left_x or right_x
                         x_title = "Frame"
                         tickvals = None
                         ticktext = None
                         if fps:
-                            x_vals = [f / fps for f in frames]
+                            if depth_x:
+                                depth_x = [f / fps for f in depth_x]
+                            if width_x:
+                                width_x = [f / fps for f in width_x]
+                            if left_x:
+                                left_x = [f / fps for f in left_x]
+                            if right_x:
+                                right_x = [f / fps for f in right_x]
+                            x_vals = depth_x or width_x or left_x or right_x
                             x_title = "Tiempo (mm:ss)"
                             if len(x_vals) > 1:
                                 step = max(1, int(len(x_vals) / 6))
@@ -1103,25 +1206,36 @@ if uploaded_video:
                         st.markdown("#### Compactación ℹ️")
                         st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
                         st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
-                        fig_c = go.Figure()
-                        fig_c.add_trace(go.Scatter(x=x_vals, y=depth, name='Profundidad (m)', line=dict(color='green')))
-                        fig_c.add_trace(go.Scatter(x=x_vals, y=width, name='Ancho (m)', line=dict(color='darkgreen')))
-                        fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
-                        if tickvals:
-                            fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
-                        st.plotly_chart(fig_c, use_container_width=True)
+                        if depth_x or width_x:
+                            fig_c = go.Figure()
+                            if depth_x:
+                                fig_c.add_trace(go.Scatter(x=depth_x, y=depth_vals, name='Profundidad (m)', line=dict(color='green')))
+                            if width_x:
+                                fig_c.add_trace(go.Scatter(x=width_x, y=width_vals, name='Ancho (m)', line=dict(color='darkgreen')))
+                            fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            if tickvals:
+                                fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
+                            st.plotly_chart(fig_c, use_container_width=True)
+                        else:
+                            st.info("Sin datos suficientes en este tramo")
                         st.markdown("#### Línea defensiva ℹ️")
                         st.caption("Qué es: altura del último bloque en X (0–105m).")
                         st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
                         st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
-                        fig_d = go.Figure()
-                        fig_d.add_trace(go.Scatter(x=x_vals, y=left, name='Línea Izquierda (m)', line=dict(color='blue')))
-                        fig_d.add_trace(go.Scatter(x=x_vals, y=right, name='Línea Derecha (m)', line=dict(color='darkblue')))
-                        fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
-                        if tickvals:
-                            fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
-                        st.plotly_chart(fig_d, use_container_width=True)
+                        if left_x or right_x:
+                            fig_d = go.Figure()
+                            if left_x:
+                                fig_d.add_trace(go.Scatter(x=left_x, y=left_vals, name='Línea Izquierda (m)', line=dict(color='blue')))
+                            if right_x:
+                                fig_d.add_trace(go.Scatter(x=right_x, y=right_vals, name='Línea Derecha (m)', line=dict(color='darkblue')))
+                            fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            if tickvals:
+                                fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
+                            st.plotly_chart(fig_d, use_container_width=True)
+                        else:
+                            st.info("Sin datos suficientes en este tramo")
             st.subheader("Heatmaps")
+            st.caption("Zonas calientes = mayor permanencia/ocupación en el clip.")
             flip_vertical = st.checkbox("Invertir eje vertical (Y)", value=True)
             use_log = st.checkbox("Usar escala logarítmica", value=False)
             st.session_state["heatmap_flip_vertical"] = flip_vertical
@@ -1134,65 +1248,161 @@ if uploaded_video:
             legend = draw_heatmap_legend(out_h)
             with col_h1:
                 h1 = heatmap_meta.get('team1', None)
+                st.markdown("#### Heatmap ℹ️")
+                st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
+                if isinstance(h1, dict):
+                    h1 = h1.get("downsampled", None)
+                approx = False
                 if h1 is not None:
-                    st.markdown("#### Heatmap ℹ️")
-                    st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
-                    if isinstance(h1, dict):
-                        h1 = h1.get("downsampled", None)
-                    if h1 is not None:
-                        heatmap = np.array(h1, dtype=np.float32)
-                    else:
-                        heatmap = None
-                    if heatmap is None:
-                        st.warning("Heatmap no disponible para este perfil.")
-                    else:
-                        rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
-                        combo = np.concatenate([rendered, legend], axis=1)
-                        st.image(combo, caption="Heatmap Team 1", use_column_width=True)
-                    if isinstance(heatmap_meta.get('team1'), dict):
-                        st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
+                    heatmap = np.array(h1, dtype=np.float32)
+                else:
+                    heatmap = build_centroid_heatmap(stats.get('homography_telemetry', {}), "team1")
+                    if heatmap is not None:
+                        approx = True
+                if heatmap is None:
+                    st.info("Sin datos suficientes en este tramo")
+                    st.image(draw_pitch_base(out_w, out_h), caption="Heatmap Team 1", use_column_width=True)
+                else:
+                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                    combo = np.concatenate([rendered, legend], axis=1)
+                    caption = "Heatmap Team 1" + (" (aprox)" if approx else "")
+                    st.image(combo, caption=caption, use_column_width=True)
+                if isinstance(heatmap_meta.get('team1'), dict):
+                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
             with col_h2:
                 h2 = heatmap_meta.get('team2', None)
+                st.markdown("#### Heatmap ℹ️")
+                st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
+                if isinstance(h2, dict):
+                    h2 = h2.get("downsampled", None)
+                approx = False
                 if h2 is not None:
-                    st.markdown("#### Heatmap ℹ️")
-                    st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
-                    if isinstance(h2, dict):
-                        h2 = h2.get("downsampled", None)
-                    if h2 is not None:
-                        heatmap = np.array(h2, dtype=np.float32)
-                    else:
-                        heatmap = None
-                    if heatmap is None:
-                        st.warning("Heatmap no disponible para este perfil.")
-                    else:
-                        rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
-                        combo = np.concatenate([rendered, legend], axis=1)
-                        st.image(combo, caption="Heatmap Team 2", use_column_width=True)
-                    if isinstance(heatmap_meta.get('team2'), dict):
-                        st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
+                    heatmap = np.array(h2, dtype=np.float32)
+                else:
+                    heatmap = build_centroid_heatmap(stats.get('homography_telemetry', {}), "team2")
+                    if heatmap is not None:
+                        approx = True
+                if heatmap is None:
+                    st.info("Sin datos suficientes en este tramo")
+                    st.image(draw_pitch_base(out_w, out_h), caption="Heatmap Team 2", use_column_width=True)
+                else:
+                    rendered = render_heatmap_overlay(heatmap, out_w, out_h, flip_vertical, use_log)
+                    combo = np.concatenate([rendered, legend], axis=1)
+                    caption = "Heatmap Team 2" + (" (aprox)" if approx else "")
+                    st.image(combo, caption=caption, use_column_width=True)
+                if isinstance(heatmap_meta.get('team2'), dict):
+                    st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
         else:
             st.warning("Scouting metrics not available for this video.")
     with tabs[5]:
         st.subheader("📘 Interpretación")
-        st.markdown("### Compactación (profundidad/ancho)")
-        st.markdown("- Qué mide: tamaño del bloque del equipo en el campo")
-        st.markdown("- Cómo leerlo: si sube, el equipo se estira; si baja, se compacta")
-        st.markdown("- Señales típicas: picos = transición; valles = bloque bajo")
-        st.markdown("- Ejemplos: si Profundidad sube fuerte y Ancho sube → contragolpe / equipo estirado")
-        st.markdown("- Cuándo desconfiar: tracking inestable o homografía saltando")
-        st.markdown("### Línea defensiva")
-        st.markdown("- Qué mide: posición en metros sobre el eje X del campo (0–105m)")
-        st.markdown("- Cómo leerlo: sube = línea alta; baja = repliegue/bloque bajo")
-        st.markdown("- Señales típicas: caída sostenida → bloque bajo")
-        st.markdown("- Ejemplo: si Línea defensiva cae y se mantiene baja → bloque bajo")
-        st.markdown("- Cuándo desconfiar: cambios bruscos por cámara o tracking")
-        st.markdown("### Heatmap")
-        st.markdown("- Qué mide: frecuencia acumulada de presencia por zona")
-        st.markdown("- Cómo leerlo: zonas rojas = mayor presencia")
-        st.markdown("- Señales típicas: concentración en banda o carril central")
-        st.markdown("- Densidad relativa: se compara dentro del mismo clip")
-        st.markdown("- Escala log: resalta zonas con poca presencia cuando hay una dominante")
-        st.markdown("- Cuándo desconfiar: homografía imprecisa o poca muestra")
+        st.markdown("""
+# Interpretación de Métricas (Beta) 
+
+**Nota:** el sistema está en beta. Cuando la señal base (homografía/tracking) baja, algunas métricas pueden mostrarse como **N/A** o como **aproximadas**. La idea es mostrar tendencias y patrones tácticos, no un dato “perfecto” frame a frame. 
+
+--- 
+
+## 1) Compactación (Profundidad y Ancho) 
+
+**Qué mide** 
+- **Profundidad (m):** largo del bloque del equipo (distancia entre la última línea y el jugador más adelantado). 
+- **Ancho (m):** apertura lateral del equipo. 
+
+**Cómo leer el gráfico** 
+- **Picos** de profundidad = el equipo **se estira** (transición / ataque rápido). 
+- **Valles** de profundidad = equipo **compacto** (bloque defensivo). 
+- **Ancho alto** = ocupa bandas / abre el campo. 
+- **Ancho bajo** = cierra espacios interiores / defensa más junta. 
+
+**Ejemplos futboleros** 
+- Profundidad ↑ + Ancho ↑ → **contraataque / equipo lanzado** 
+- Profundidad ↓ + Ancho ↓ → **repliegue + bloque compacto** 
+- Ancho ↑ pero profundidad estable → **circulación y amplitud** (ataque posicional) 
+- Profundidad ↑ con ancho ↓ → **juego directo por carril central** 
+
+**Uso en Scouting (qué podés detectar)** 
+- Equipos **verticales** vs **posicionales** 
+- Nivel de **disciplina táctica** (oscilación vs estabilidad) 
+- Momentos de **transición** (cuándo se estiran y por qué) 
+- “Firma” de estilo: bloque alto/medio/bajo y amplitud habitual 
+
+--- 
+
+## 2) Línea Defensiva 
+
+**Qué mide** 
+- Altura del bloque defensivo (metros). Indica si el equipo defiende alto o bajo. 
+
+**Cómo leer** 
+- Línea alta sostenida → **presión alta** / achique / intención de recuperar rápido. 
+- Línea baja sostenida → **bloque bajo** / repliegue / protección del área. 
+- Subidas y bajadas bruscas → equipo **reactivo**, o partido “partido”. 
+
+**Ejemplos futboleros** 
+- Línea defensiva sube mientras compactación baja → **presión + equipo junto** 
+- Línea defensiva baja y profundidad alta → **equipo largo** (riesgo entre líneas) 
+
+**Uso en Scouting** 
+- Detectar si el equipo juega al **offside** o defiende en **bloque bajo** 
+- Identificar vulnerabilidad a **pelotas largas** 
+- Analizar coherencia: línea alta sin compactación suele ser riesgo 
+
+--- 
+
+## 3) Formación Detectada (aproximada) 
+
+**Qué representa** 
+- La formación “más frecuente” estimada por clustering de posiciones. 
+
+**Cómo leer** 
+- Se muestra como **aprox** porque en broadcast: 
+  - faltan jugadores por oclusión, 
+  - el equipo cambia de fase (defiende 4-4-2 y ataca 2-3-5, por ejemplo). 
+
+**Uso en Scouting** 
+- Sistema base (4-3-3 / 4-2-3-1 / 3-5-2) 
+- Cambios estructurales: “¿se transforma en ataque?” 
+- Señales de entrenador: extremos altos, carrileros, doble 5, etc. 
+
+--- 
+
+## 4) Velocidad y Distancia 
+
+**Qué mide** 
+- Distancia total (y promedio por jugador). 
+- Velocidad máxima y sprints (aproximados). 
+
+**Cómo leer** 
+- Distancia ↑ → equipo con más **actividad** (presión, ida y vuelta). 
+- Sprints ↑ → partido más **vertical** o presión intensa. 
+
+**Nota Beta** 
+- Picos extremos pueden venir de tracking. En demo la velocidad máxima se muestra dentro de rangos humanos plausibles y se marca si fue “cappeada”. 
+
+**Uso en Scouting** 
+- Intensidad del equipo y del ritmo del partido 
+- Comparar estilos: presión constante vs bloque y salida 
+- Detectar tramos de alta exigencia (minutos “calientes”) 
+
+--- 
+
+## 5) Heatmap (Mapa de Calor) 
+
+**Qué muestra** 
+- Zonas del campo donde el equipo **más ocupó** (por presencia de jugadores). 
+
+**Cómo leer** 
+- Zonas “calientes” = mayor permanencia / control territorial 
+- Banda cargada = preferencia por sector / ataques repetidos 
+- Distribución alta = presión territorial 
+- Distribución baja = repliegue / defensa cerca del área 
+
+**Uso en Scouting** 
+- Identificar banda preferida y patrones de ocupación 
+- Ver si el equipo juega ancho o se centraliza 
+- Contextualizar: “¿dónde intenta progresar y dónde recupera?” 
+""")
 
     # Possession Tab
     with tabs[6]:
@@ -1290,14 +1500,20 @@ if uploaded_video:
                     t1 = per_team.get('team1', {})
                     st.metric("Distancia Total", f"{t1.get('total_distance_m', 0):.0f} m")
                     st.metric("Dist. Prom. por Jugador", f"{t1.get('avg_distance_m', 0):.0f} m")
-                    st.metric("Velocidad Máxima", f"{t1.get('max_speed_kmh', 0):.1f} km/h")
+                    t1_max, t1_capped = cap_speed_display(t1.get('max_speed_kmh', 0))
+                    st.metric("Velocidad Máxima", f"{t1_max:.1f} km/h")
+                    if t1_capped:
+                        st.caption("Velocidad cappeada por plausibilidad (beta / tracking).")
                     st.metric("Sprints Totales", t1.get('total_sprints', 0))
                 with col_s2:
                     st.markdown("### Team 2")
                     t2 = per_team.get('team2', {})
                     st.metric("Distancia Total", f"{t2.get('total_distance_m', 0):.0f} m")
                     st.metric("Dist. Prom. por Jugador", f"{t2.get('avg_distance_m', 0):.0f} m")
-                    st.metric("Velocidad Máxima", f"{t2.get('max_speed_kmh', 0):.1f} km/h")
+                    t2_max, t2_capped = cap_speed_display(t2.get('max_speed_kmh', 0))
+                    st.metric("Velocidad Máxima", f"{t2_max:.1f} km/h")
+                    if t2_capped:
+                        st.caption("Velocidad cappeada por plausibilidad (beta / tracking).")
                     st.metric("Sprints Totales", t2.get('total_sprints', 0))
 
                 # Tabla por jugador con sprints y zonas de intensidad
@@ -1305,11 +1521,13 @@ if uploaded_video:
                     with st.expander("Ver detalle por jugador"):
                         rows = []
                         for tid, data in speed_dist['per_player'].items():
+                            max_speed, capped = cap_speed_display(data.get('max_speed_kmh', 0))
                             row = {
                                 'ID': tid,
                                 'Equipo': data['team'],
                                 'Distancia (m)': round(data['distance_m'], 1),
-                                'Vel. Máx (km/h)': round(data.get('max_speed_kmh', 0), 1),
+                                'Vel. Máx (km/h)': round(max_speed, 1),
+                                'Cappeada': "Sí" if capped else "No",
                                 'Sprints': data.get('sprint_count', 0),
                                 'Dist. Sprint (m)': round(data.get('sprint_distance_m', 0), 1),
                             }
