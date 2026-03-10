@@ -213,6 +213,8 @@ class HomographyManager:
             denom = np.linalg.norm(Hn_cur) + 1e-8
             delta = float(np.linalg.norm(Hn_new - Hn_cur) / denom)
             self.last_delta = float(delta)
+            if delta > DELTA_H_CUT:
+                self.cut_detected = True
 
         if self.mode == "ACQUIRE":
             warmup_score = float(err + 0.5 * (delta if delta is not None else 0.0))

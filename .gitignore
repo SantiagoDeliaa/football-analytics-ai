@@ -10,6 +10,7 @@ env/
 inputs/
 outputs/
 videos/
+clips/
 *.mp4
 *.avi
 *.mov
