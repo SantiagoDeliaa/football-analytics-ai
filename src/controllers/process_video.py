@@ -40,6 +40,8 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
+MIN_PROJECTION_CONFIDENCE = 0.45
+
 
 def convert_to_native_types(obj):
     """
@@ -740,6 +742,22 @@ def classify_person_smart(
         return ('team1', 1)
     else:
         return ('team2', 2)
+
+
+def filter_detections_by_confidence(dets: sv.Detections, min_confidence: float) -> sv.Detections:
+    if dets is None or len(dets) == 0:
+        return dets
+    confidences = getattr(dets, "confidence", None)
+    if confidences is None:
+        return dets
+    try:
+        valid_mask = np.array(confidences) >= float(min_confidence)
+    except Exception:
+        return dets
+    try:
+        return dets[valid_mask]
+    except Exception:
+        return dets
 
 
 def process_video(
@@ -1482,23 +1500,28 @@ def process_video(
                                 smoothed.append(avg_pos)
                             return np.array(smoothed)
 
+                        # Referee projection/metrics patch: confidence gating antes de proyección táctica
                         # Transformar y suavizar team1 (con flip_x para corregir inversión)
                         if any(team1_mask):
                             t1_dets = tracked_persons[np.array(team1_mask)]
-                            raw_pos = transformer.transform_points(get_bottom_center(t1_dets), flip_x=True)
-                            if t1_dets.tracker_id is not None:
-                                points_to_transform['team1'] = smooth_positions(t1_dets.tracker_id, raw_pos)
-                            else:
-                                points_to_transform['team1'] = raw_pos
+                            t1_dets = filter_detections_by_confidence(t1_dets, MIN_PROJECTION_CONFIDENCE)
+                            if len(t1_dets) > 0:
+                                raw_pos = transformer.transform_points(get_bottom_center(t1_dets), flip_x=True)
+                                if t1_dets.tracker_id is not None:
+                                    points_to_transform['team1'] = smooth_positions(t1_dets.tracker_id, raw_pos)
+                                else:
+                                    points_to_transform['team1'] = raw_pos
 
                         # Transformar y suavizar team2 (con flip_x para corregir inversión)
                         if any(team2_mask):
                             t2_dets = tracked_persons[np.array(team2_mask)]
-                            raw_pos = transformer.transform_points(get_bottom_center(t2_dets), flip_x=True)
-                            if t2_dets.tracker_id is not None:
-                                points_to_transform['team2'] = smooth_positions(t2_dets.tracker_id, raw_pos)
-                            else:
-                                points_to_transform['team2'] = raw_pos
+                            t2_dets = filter_detections_by_confidence(t2_dets, MIN_PROJECTION_CONFIDENCE)
+                            if len(t2_dets) > 0:
+                                raw_pos = transformer.transform_points(get_bottom_center(t2_dets), flip_x=True)
+                                if t2_dets.tracker_id is not None:
+                                    points_to_transform['team2'] = smooth_positions(t2_dets.tracker_id, raw_pos)
+                                else:
+                                    points_to_transform['team2'] = raw_pos
                         
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
                             t1_arr = points_to_transform['team1']
@@ -1511,12 +1534,8 @@ def process_video(
                             oob_mask = (t2_arr[:, 0] < 0) | (t2_arr[:, 0] > 105) | (t2_arr[:, 1] < 0) | (t2_arr[:, 1] > 68)
                             team2_oob = float(np.sum(oob_mask) / max(len(t2_arr), 1) * 100.0)
 
-                        # Transformar árbitros (sin suavizar mucho ya que se mueven menos)
-                        if any(referee_mask):
-                            ref_dets = tracked_persons[np.array(referee_mask)]
-                            points_to_transform['referee'] = transformer.transform_points(
-                                get_bottom_center(ref_dets), flip_x=True
-                            )
+                        # Referee projection/metrics patch: los referees quedan solo en overlay visual
+                        # y no se incluyen en la proyección táctica 2D ni en métricas.
 
                         # Transformar porteros
                         if any(goalkeeper_mask):
@@ -1681,6 +1700,7 @@ def process_video(
                             formations_timeline['team1'].append(formation1)
 
                             if not metrics_blocked:
+                                # Referee projection/metrics patch: solo team1 filtrado por confianza.
                                 metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
                                 team1_tracker.update(metrics1, frame_count)
 
@@ -1703,6 +1723,7 @@ def process_video(
                             formations_timeline['team2'].append(formation2)
                             
                             if not metrics_blocked:
+                                # Referee projection/metrics patch: solo team2 filtrado por confianza.
                                 metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
                                 team2_tracker.update(metrics2, frame_count)
                         
