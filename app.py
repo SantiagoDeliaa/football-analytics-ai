@@ -25,66 +25,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib import colors
 from src.utils.metric_formatting import format_metric_mean, format_metric_range
-
-def draw_pitch_base(width_px: int, height_px: int) -> np.ndarray:
-    pitch = np.zeros((height_px, width_px, 3), dtype=np.uint8)
-    pitch[:, :] = (20, 70, 20)
-    line_color = (255, 255, 255)
-    thickness = max(1, int(min(width_px, height_px) * 0.004))
-    cv2.rectangle(pitch, (0, 0), (width_px - 1, height_px - 1), line_color, thickness)
-    mid_x = width_px // 2
-    cv2.line(pitch, (mid_x, 0), (mid_x, height_px - 1), line_color, thickness)
-    circle_radius = int(height_px * 0.12)
-    cv2.circle(pitch, (mid_x, height_px // 2), circle_radius, line_color, thickness)
-    box_w = int(width_px * 0.17)
-    box_h = int(height_px * 0.36)
-    box_y1 = (height_px - box_h) // 2
-    box_y2 = box_y1 + box_h
-    cv2.rectangle(pitch, (0, box_y1), (box_w, box_y2), line_color, thickness)
-    cv2.rectangle(pitch, (width_px - box_w, box_y1), (width_px - 1, box_y2), line_color, thickness)
-    return pitch
-
-def render_heatmap_overlay(heatmap_small: np.ndarray, out_w: int, out_h: int, flip_vertical: bool, use_log: bool) -> np.ndarray:
-    heatmap = heatmap_small.astype(np.float32)
-    heatmap = np.nan_to_num(heatmap, nan=0.0, posinf=0.0, neginf=0.0)
-    heatmap[heatmap < 0] = 0.0
-    if flip_vertical:
-        heatmap = np.flipud(heatmap)
-    if use_log:
-        heatmap = np.log1p(heatmap)
-    positive = heatmap[heatmap > 0]
-    if positive.size > 0:
-        p2 = float(np.percentile(positive, 2))
-        p98 = float(np.percentile(positive, 98))
-        if p98 <= p2:
-            p98 = p2 + 1e-6
-        heatmap = np.clip(heatmap, p2, p98)
-        heatmap = (heatmap - p2) / (p98 - p2)
-        heatmap_uint8 = (heatmap * 255).astype(np.uint8)
-    else:
-        heatmap_uint8 = np.zeros_like(heatmap, dtype=np.uint8)
-    heatmap_up = cv2.resize(heatmap_uint8, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
-    cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_HOT
-    heatmap_color = cv2.applyColorMap(heatmap_up, cmap)
-    alpha = (heatmap_up.astype(np.float32) / 255.0) * 0.85
-    mask = heatmap_up > 0
-    alpha[mask] = np.maximum(alpha[mask], 0.12)
-    alpha_3 = np.dstack([alpha, alpha, alpha])
-    pitch = draw_pitch_base(out_w, out_h).astype(np.float32)
-    overlay = heatmap_color.astype(np.float32)
-    blended = pitch * (1.0 - alpha_3) + overlay * alpha_3
-    return blended.astype(np.uint8)
-
-def draw_heatmap_legend(height_px: int, width_px: int = 90) -> np.ndarray:
-    grad = np.linspace(1, 0, height_px, dtype=np.float32)
-    grad_img = (grad[:, None] * 255).astype(np.uint8)
-    grad_img = np.repeat(grad_img, width_px, axis=1)
-    cmap = cv2.COLORMAP_TURBO if hasattr(cv2, "COLORMAP_TURBO") else cv2.COLORMAP_HOT
-    legend = cv2.applyColorMap(grad_img, cmap)
-    text_color = (255, 255, 255)
-    cv2.putText(legend, "Presencia", (5, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-    cv2.putText(legend, "(clip)", (5, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
-    return legend
+from src.utils.ui.theme import apply_premium_theme, render_app_header, render_section_title, render_status_card, apply_plotly_dark_theme
+from src.utils.ui.content_blocks import INTERPRETATION_MARKDOWN
+from src.utils.ui.heatmap_render import draw_pitch_base, render_heatmap_overlay, draw_heatmap_legend, build_centroid_heatmap
 
 MAX_HUMAN_SPEED_KMH = 36.0
 
@@ -116,26 +59,6 @@ def cap_speed_display(value: float, cap: float = MAX_HUMAN_SPEED_KMH) -> tuple[f
     if v > cap:
         return cap, True
     return v, False
-
-def build_centroid_heatmap(telemetry: dict, team_key: str, bins: tuple[int, int] = (26, 17)) -> np.ndarray | None:
-    if not telemetry:
-        return None
-    xs = telemetry.get(f"{team_key}_centroid_x", [])
-    ys = telemetry.get(f"{team_key}_centroid_y", [])
-    if not xs or not ys:
-        return None
-    heatmap = np.zeros((bins[0], bins[1]), dtype=np.float32)
-    for x, y in zip(xs, ys):
-        if x is None or y is None:
-            continue
-        if not (0 <= x <= 105 and 0 <= y <= 68):
-            continue
-        xi = int(x * (bins[0] - 1) / 105)
-        yi = int(y * (bins[1] - 1) / 68)
-        heatmap[xi, yi] += 1.0
-    if np.sum(heatmap) <= 0:
-        return None
-    return heatmap
 
 def filter_series(frames, values):
     if not frames or not values:
@@ -333,7 +256,7 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     if has_fallback:
         quality_notes.append("Se detectó fallback de homografía")
     if level1 == "Baja" or level2 == "Baja":
-        quality_notes.append("⚠ Datos limitados")
+        quality_notes.append("Datos limitados")
     if quality_notes:
         draw_text("Notas de calidad:", size=11, leading=14)
         for note in quality_notes:
@@ -512,17 +435,16 @@ def generate_scouting_pdf(stats_data: dict, video_name: str = None, use_log: boo
     buffer.seek(0)
     return buffer.getvalue()
 
-st.set_page_config(page_title="Soccer Analytics AI", layout="wide", initial_sidebar_state="expanded")
-
-st.title("Football Analytics AI")
-st.caption("Análisis táctico completo: tracking, estadísticas y métricas de comportamiento")
-st.info("Sistema en beta: algunas métricas pueden ser aproximadas o N/A según la señal.")
+st.set_page_config(page_title="Soccer Analytics Platform", layout="wide", initial_sidebar_state="expanded")
+apply_premium_theme()
+render_app_header()
+st.caption("Sistema en beta: algunas métricas pueden ser aproximadas o N/A según la señal.")
 
 # === SIDEBAR CONFIGURATION ===
-st.sidebar.header("⚙️ Configuración")
+st.sidebar.header("Configuración")
 
 # 1. PLAYERS MODEL
-st.sidebar.subheader("1. Jugadores")
+st.sidebar.subheader("Modelo de jugadores")
 player_source = st.sidebar.radio(
     "Modelo de Jugadores",
     ["YOLOv8 Genérico (COCO)", "Subir Modelo Custom (.pt)"],
@@ -545,7 +467,7 @@ else:
         st.sidebar.success(f"Cargado: {uploaded_player.name}")
 
 # 2. BALL MODEL
-st.sidebar.subheader("2. Pelota")
+st.sidebar.subheader("Modelo de pelota")
 ball_source = st.sidebar.radio(
     "Modelo de Pelota",
     ["Heurística (Clase 'sports ball')", "Subir Modelo Custom (.pt)"],
@@ -564,7 +486,7 @@ if ball_source == "Subir Modelo Custom (.pt)":
         st.sidebar.success(f"Cargado: {uploaded_ball.name}")
 
 # 3. RADAR / PITCH
-st.sidebar.subheader("3. Radar View")
+st.sidebar.subheader("Radar táctico")
 enable_radar = st.sidebar.checkbox("Habilitar Radar", value=True)
 enable_analytics = st.sidebar.checkbox("Habilitar Análisis Táctico", value=True,
                                        help="Calcula formaciones y métricas tácticas")
@@ -573,7 +495,7 @@ enable_possession = st.sidebar.checkbox("Habilitar Análisis de Posesión", valu
 disable_inertia = st.sidebar.checkbox("Modo NO INERCIA (A/B)", value=False,
                                       help="No reutiliza homografía entre frames (max_inertia_frames=0)")
 
-st.sidebar.subheader("4. Export")
+st.sidebar.subheader("Exportación")
 export_profile_options = ["summary", "debug_sampled", "full"]
 default_export_index = export_profile_options.index(EXPORT_PROFILE) if EXPORT_PROFILE in export_profile_options else 1
 export_profile = st.sidebar.selectbox("Perfil de export", export_profile_options, index=default_export_index)
@@ -595,7 +517,7 @@ if enable_radar:
     pitch_source = st.sidebar.radio(
         "Modelo de Campo",
         [
-            "Homography.pt (32 keypoints) - ⭐ Recomendado",
+            "Homography.pt (32 keypoints) - Recomendado",
             "Soccana Keypoint (29 keypoints)",
             "Aproximación Pantalla Completa (Experimental)"
         ],
@@ -603,14 +525,14 @@ if enable_radar:
         help="Homography.pt detecta más keypoints y tiene mayor tasa de éxito"
     )
 
-    if pitch_source == "Homography.pt (32 keypoints) - ⭐ Recomendado":
+    if pitch_source == "Homography.pt (32 keypoints) - Recomendado":
         homography_path = Path("models/homography.pt")
         if homography_path.exists():
             with st.spinner("Cargando modelo Homography (32 keypoints)..."):
                 pitch_model = YOLO(str(homography_path))
-            st.sidebar.success("✅ Modelo Homography cargado (100% tasa éxito)")
+            st.sidebar.success("Modelo Homography cargado (100% tasa éxito)")
         else:
-            st.sidebar.error(f"❌ Modelo no encontrado: {homography_path}")
+            st.sidebar.error(f"Modelo no encontrado: {homography_path}")
             st.sidebar.info("Asegúrate de tener el archivo models/homography.pt")
 
     elif pitch_source == "Soccana Keypoint (29 keypoints)":
@@ -618,9 +540,9 @@ if enable_radar:
         if soccana_path.exists():
             with st.spinner("Cargando modelo Soccana_Keypoint (29 keypoints)..."):
                 pitch_model = YOLO(str(soccana_path))
-            st.sidebar.success("✅ Modelo Soccana cargado (~65% tasa éxito)")
+            st.sidebar.success("Modelo Soccana cargado (~65% tasa éxito)")
         else:
-            st.sidebar.error(f"❌ Modelo no encontrado")
+            st.sidebar.error("Modelo no encontrado")
             st.sidebar.info("Descarga con: python scripts/download_soccana_model.py")
 
     else:
@@ -633,7 +555,21 @@ if 'stats' not in st.session_state:
 if 'video_processed' not in st.session_state:
     st.session_state.video_processed = False
 
-uploaded_video = st.file_uploader("📹 Arrastra un video aquí", type=["mp4", "mov", "avi"])
+if st.session_state.stats:
+    render_section_title("Session Overview")
+    _stats = st.session_state.stats
+    _duration = _stats.get("duration_seconds", 0.0)
+    _frames = _stats.get("total_frames", 0)
+    _fps = _frames / max(1e-6, float(_duration if _duration else 0.0)) if _frames else 0.0
+    _col_a, _col_b, _col_c = st.columns(3)
+    with _col_a:
+        render_status_card("Duración analizada", f"{_duration:.1f} s")
+    with _col_b:
+        render_status_card("Frames procesados", str(_frames))
+    with _col_c:
+        render_status_card("Rendimiento", f"{_fps:.1f} FPS")
+
+uploaded_video = st.file_uploader("Cargar video", type=["mp4", "mov", "avi"])
 
 if uploaded_video:
     # Save input video
@@ -643,12 +579,13 @@ if uploaded_video:
         f.write(uploaded_video.read())
 
     # Tabs for organization
-    tabs = st.tabs(["🎬 Video", "📊 Estadísticas", "📈 Gráficos", "💾 Exportar", "🕵️ Scouting", "📘 Interpretación", "⚽ Posesión"])
+    tabs = st.tabs(["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"])
 
     with tabs[0]:
         col_input, col_output = st.columns(2)
 
         with col_input:
+            render_section_title("Video Source")
             st.subheader("Video Original")
             st.video(str(input_path))
 
@@ -662,18 +599,29 @@ if uploaded_video:
 
                     with open(target_path, "rb") as f:
                         st.download_button(
-                            "⬇️ Descargar Video",
+                            "Descargar video procesado",
                             f,
                             file_name=output_filename,
                             mime="video/mp4"
                         )
             else:
-                st.info("👉 Haz clic en 'Procesar Video' para iniciar")
+                render_status_card("Estado del procesamiento", "Pendiente de ejecución")
+                st.info("Ejecuta el procesamiento para habilitar métricas y exportes.")
 
     # Process Button
-    if st.button("🚀 Procesar Video", type="primary", use_container_width=True):
+    _radar_mode = "Activado" if enable_radar else "Desactivado"
+    _analytics_mode = "Activado" if enable_analytics else "Desactivado"
+    _possession_mode = "Activado" if enable_possession else "Desactivado"
+    _status_a, _status_b, _status_c = st.columns(3)
+    with _status_a:
+        render_status_card("Radar táctico", _radar_mode)
+    with _status_b:
+        render_status_card("Análisis táctico", _analytics_mode)
+    with _status_c:
+        render_status_card("Posesión", _possession_mode)
+    if st.button("Procesar video", type="primary", use_container_width=True):
         if player_model is None:
-            st.error("❌ Debes cargar un modelo de jugadores")
+            st.error("Debes cargar un modelo de jugadores.")
         else:
             with st.spinner("Procesando video..."):
                 status_placeholder = st.empty()
@@ -684,7 +632,7 @@ if uploaded_video:
                 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
                 try:
-                    status_placeholder.text("🎯 Iniciando análisis...")
+                    status_placeholder.text("Inicializando análisis...")
                     progress_bar.progress(10)
 
                     # Process video
@@ -712,7 +660,7 @@ if uploaded_video:
                     )
 
                     progress_bar.progress(90)
-                    status_placeholder.text("📊 Generando estadísticas...")
+                    status_placeholder.text("Generando estadísticas...")
 
                     # Check if stats file exists
                     stats_path = target_path.parent / f"{target_path.stem}_stats.json"
@@ -721,12 +669,12 @@ if uploaded_video:
                             st.session_state.stats = json.load(f)
 
                     progress_bar.progress(100)
-                    status_placeholder.success("✅ ¡Procesamiento completado!")
+                    status_placeholder.success("Procesamiento completado.")
                     st.session_state.video_processed = True
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                    st.error(f"Error: {str(e)}")
                     import traceback
                     with st.expander("Ver detalles del error"):
                         st.code(traceback.format_exc())
@@ -736,7 +684,8 @@ if uploaded_video:
         if st.session_state.stats:
             stats = st.session_state.stats
 
-            st.subheader("📊 Análisis Táctico")
+            render_section_title("Tactical Overview")
+            st.subheader("Análisis táctico")
             if stats.get('health_summary', {}).get('demo_mode') == "degraded":
                 st.warning("Demo degradado: métricas aproximadas (homografía no estable).")
 
@@ -755,12 +704,12 @@ if uploaded_video:
 
             # Formations
             if 'formations' in stats:
-                st.subheader("⚽ Formaciones Detectadas")
+                st.subheader("Formaciones detectadas")
 
                 col_t1, col_t2 = st.columns(2)
 
                 with col_t1:
-                    st.markdown("### 🟢 Team 1")
+                    st.markdown("### Team 1")
                     raw_form1 = stats['formations'].get('team1', {}).get('most_common', 'N/A')
                     display_form1, approx1 = map_formation_display(raw_form1)
                     st.metric("Formación más común", display_form1, help="Basada en análisis temporal")
@@ -768,7 +717,7 @@ if uploaded_video:
                         st.caption("Aprox. por detección incompleta o fase mixta.")
 
                 with col_t2:
-                    st.markdown("### 🔵 Team 2")
+                    st.markdown("### Team 2")
                     raw_form2 = stats['formations'].get('team2', {}).get('most_common', 'N/A')
                     display_form2, approx2 = map_formation_display(raw_form2)
                     st.metric("Formación más común", display_form2, help="Basada en análisis temporal")
@@ -779,7 +728,7 @@ if uploaded_video:
 
             # Tactical Metrics
             if 'metrics' in stats:
-                st.subheader("📈 Métricas Tácticas")
+                st.subheader("Métricas tácticas")
 
                 metrics1 = stats['metrics'].get('team1', {})
                 metrics2 = stats['metrics'].get('team2', {})
@@ -827,12 +776,13 @@ if uploaded_video:
                                     st.text(f"  Min-Max: {min_text} - {max_text}")
 
         else:
-            st.info("📊 Las estadísticas aparecerán aquí después de procesar el video")
+            st.info("Las estadísticas aparecerán aquí después de procesar el video.")
 
     # Charts Tab
     with tabs[2]:
         if st.session_state.stats and 'timeline' in st.session_state.stats:
-            st.subheader("📈 Evolución Temporal")
+            render_section_title("Temporal Analysis")
+            st.subheader("Evolución temporal")
 
             timeline = st.session_state.stats['timeline']
 
@@ -856,6 +806,7 @@ if uploaded_video:
                         yaxis_title='Presión (m)',
                         hovermode='x unified'
                     )
+                    apply_plotly_dark_theme(fig_pressure)
                     st.plotly_chart(fig_pressure, use_container_width=True)
                 else:
                     st.info("Sin datos suficientes en este tramo")
@@ -879,6 +830,7 @@ if uploaded_video:
                         yaxis_title='Área (m²)',
                         hovermode='x unified'
                     )
+                    apply_plotly_dark_theme(fig_compact)
                     st.plotly_chart(fig_compact, use_container_width=True)
                 else:
                     st.info("Sin datos suficientes en este tramo")
@@ -902,17 +854,26 @@ if uploaded_video:
                         yaxis_title='Amplitud (m)',
                         hovermode='x unified'
                     )
+                    apply_plotly_dark_theme(fig_width)
                     st.plotly_chart(fig_width, use_container_width=True)
                 else:
                     st.info("Sin datos suficientes en este tramo")
 
         else:
-            st.info("📈 Los gráficos aparecerán aquí después de procesar el video con análisis táctico")
+            st.info("Los gráficos aparecerán aquí después de procesar el video con análisis táctico.")
 
     # Export Tab
     with tabs[3]:
         if st.session_state.stats:
-            st.subheader("💾 Exportar Datos")
+            render_section_title("Data Exports")
+            st.subheader("Exportar datos")
+            exp_a, exp_b, exp_c = st.columns(3)
+            with exp_a:
+                render_status_card("Formato JSON", "Disponible")
+            with exp_b:
+                render_status_card("Formato CSV", "Disponible")
+            with exp_c:
+                render_status_card("Formato PDF", "Disponible")
 
             col_json, col_csv = st.columns(2)
 
@@ -920,7 +881,7 @@ if uploaded_video:
                 st.markdown("### JSON")
                 json_str = json.dumps(st.session_state.stats, indent=2)
                 st.download_button(
-                    label="⬇️ Descargar JSON",
+                    label="Descargar JSON",
                     data=json_str,
                     file_name="soccer_analytics_stats.json",
                     mime="application/json"
@@ -934,7 +895,7 @@ if uploaded_video:
                         df_export = pd.DataFrame(timeline['team1'])
                         csv = df_export.to_csv(index=False)
                         st.download_button(
-                            label="⬇️ Descargar CSV (Team 1)",
+                            label="Descargar CSV (Team 1)",
                             data=csv,
                             file_name="team1_timeline.csv",
                             mime="text/csv"
@@ -949,20 +910,21 @@ if uploaded_video:
                 flip_vertical=st.session_state.get("heatmap_flip_vertical", True)
             )
             st.download_button(
-                label="📄 Exportar PDF",
+                label="Exportar PDF",
                 data=pdf_bytes,
                 file_name="reporte_scouting.pdf",
                 mime="application/pdf"
             )
 
         else:
-            st.info("💾 Las opciones de exportación aparecerán aquí después de procesar el video")
+            st.info("Las opciones de exportación aparecerán aquí después de procesar el video.")
 
     with tabs[4]:
         if st.session_state.stats and 'scouting_heatmaps' in st.session_state.stats:
             stats = st.session_state.stats
-            st.subheader("🕵️ Scouting")
-            st.markdown("### 🧠 Resumen automático del clip")
+            render_section_title("Scouting Analysis")
+            st.subheader("Scouting")
+            st.markdown("### Resumen automático del clip")
             metrics = stats.get('metrics', {})
             timeline = stats.get('timeline', {})
             health_summary = stats.get('health_summary', {})
@@ -1044,7 +1006,7 @@ if uploaded_video:
                         st.warning(f"Confianza: {level1} ({ratio1:.0f}/100)")
                     if level1 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
-                        st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
+                        st.caption("Pocos frames válidos: posible jitter de homografía / tracking.")
                     elif level1 == "Media":
                         st.info("Interpretación moderada...")
                 else:
@@ -1063,7 +1025,7 @@ if uploaded_video:
                         st.warning(f"Confianza: {level2} ({ratio2:.0f}/100)")
                     if level2 == "Baja":
                         st.warning("Interpretación limitada: pocos frames válidos...")
-                        st.caption("⚠ Pocos frames válidos: posible jitter de homografía / tracking.")
+                        st.caption("Pocos frames válidos: posible jitter de homografía / tracking.")
                     elif level2 == "Media":
                         st.info("Interpretación moderada...")
                 else:
@@ -1111,7 +1073,7 @@ if uploaded_video:
             if 'timeline' in stats:
                 timeline = stats['timeline']
                 with col_t1:
-                    st.markdown("### 🟢 Team 1")
+                    st.markdown("### Team 1")
                     frames = timeline.get('team1', {}).get('frame_number', [])
                     depth = timeline.get('team1', {}).get('block_depth_m', [])
                     width = timeline.get('team1', {}).get('block_width_m', [])
@@ -1141,7 +1103,7 @@ if uploaded_video:
                                 step = max(1, int(len(x_vals) / 6))
                                 tickvals = x_vals[::step]
                                 ticktext = [format_mmss(t) for t in tickvals]
-                        st.markdown("#### Compactación ℹ️")
+                        st.markdown("#### Compactación")
                         st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
                         st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
                         if depth_x or width_x:
@@ -1151,12 +1113,13 @@ if uploaded_video:
                             if width_x:
                                 fig_c.add_trace(go.Scatter(x=width_x, y=width_vals, name='Ancho (m)', line=dict(color='darkgreen')))
                             fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            apply_plotly_dark_theme(fig_c)
                             if tickvals:
                                 fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                             st.plotly_chart(fig_c, use_container_width=True)
                         else:
                             st.info("Sin datos suficientes en este tramo")
-                        st.markdown("#### Línea defensiva ℹ️")
+                        st.markdown("#### Línea defensiva")
                         st.caption("Qué es: altura del último bloque en X (0–105m).")
                         st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
                         st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
@@ -1167,13 +1130,14 @@ if uploaded_video:
                             if right_x:
                                 fig_d.add_trace(go.Scatter(x=right_x, y=right_vals, name='Línea Derecha (m)', line=dict(color='darkblue')))
                             fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            apply_plotly_dark_theme(fig_d)
                             if tickvals:
                                 fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                             st.plotly_chart(fig_d, use_container_width=True)
                         else:
                             st.info("Sin datos suficientes en este tramo")
                 with col_t2:
-                    st.markdown("### 🔵 Team 2")
+                    st.markdown("### Team 2")
                     frames = timeline.get('team2', {}).get('frame_number', [])
                     depth = timeline.get('team2', {}).get('block_depth_m', [])
                     width = timeline.get('team2', {}).get('block_width_m', [])
@@ -1203,7 +1167,7 @@ if uploaded_video:
                                 step = max(1, int(len(x_vals) / 6))
                                 tickvals = x_vals[::step]
                                 ticktext = [format_mmss(t) for t in tickvals]
-                        st.markdown("#### Compactación ℹ️")
+                        st.markdown("#### Compactación")
                         st.caption("Qué es: tamaño del bloque del equipo. Profundidad = largo (def→ata). Ancho = apertura lateral.")
                         st.caption("Cómo leer: picos = equipo se estira (transición). valles = equipo compacto (bloque).")
                         if depth_x or width_x:
@@ -1213,12 +1177,13 @@ if uploaded_video:
                             if width_x:
                                 fig_c.add_trace(go.Scatter(x=width_x, y=width_vals, name='Ancho (m)', line=dict(color='darkgreen')))
                             fig_c.update_layout(title='Compactación', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            apply_plotly_dark_theme(fig_c)
                             if tickvals:
                                 fig_c.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                             st.plotly_chart(fig_c, use_container_width=True)
                         else:
                             st.info("Sin datos suficientes en este tramo")
-                        st.markdown("#### Línea defensiva ℹ️")
+                        st.markdown("#### Línea defensiva")
                         st.caption("Qué es: altura del último bloque en X (0–105m).")
                         st.caption("Cómo leer: sube = línea alta/presión; baja = repliegue/bloque bajo.")
                         st.caption("Nota: mostramos dos hipótesis (izq/der) por orientación broadcast.")
@@ -1229,6 +1194,7 @@ if uploaded_video:
                             if right_x:
                                 fig_d.add_trace(go.Scatter(x=right_x, y=right_vals, name='Línea Derecha (m)', line=dict(color='darkblue')))
                             fig_d.update_layout(title='Línea Defensiva', xaxis_title=x_title, yaxis_title='Metros', hovermode='x unified')
+                            apply_plotly_dark_theme(fig_d)
                             if tickvals:
                                 fig_d.update_xaxes(tickvals=tickvals, ticktext=ticktext)
                             st.plotly_chart(fig_d, use_container_width=True)
@@ -1248,7 +1214,7 @@ if uploaded_video:
             legend = draw_heatmap_legend(out_h)
             with col_h1:
                 h1 = heatmap_meta.get('team1', None)
-                st.markdown("#### Heatmap ℹ️")
+                st.markdown("#### Heatmap")
                 st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
                 if isinstance(h1, dict):
                     h1 = h1.get("downsampled", None)
@@ -1271,7 +1237,7 @@ if uploaded_video:
                     st.caption(f"bins_shape={heatmap_meta.get('bins_shape')} | sample_rate={heatmap_meta.get('sample_rate')} | total_samples={heatmap_meta.get('total_samples')}")
             with col_h2:
                 h2 = heatmap_meta.get('team2', None)
-                st.markdown("#### Heatmap ℹ️")
+                st.markdown("#### Heatmap")
                 st.caption("Intensidad = cantidad de presencia en este clip (no es ‘calor’, es frecuencia).")
                 if isinstance(h2, dict):
                     h2 = h2.get("downsampled", None)
@@ -1295,114 +1261,9 @@ if uploaded_video:
         else:
             st.warning("Scouting metrics not available for this video.")
     with tabs[5]:
-        st.subheader("📘 Interpretación")
-        st.markdown("""
-# Interpretación de Métricas (Beta) 
-
-**Nota:** el sistema está en beta. Cuando la señal base (homografía/tracking) baja, algunas métricas pueden mostrarse como **N/A** o como **aproximadas**. La idea es mostrar tendencias y patrones tácticos, no un dato “perfecto” frame a frame. 
-
---- 
-
-## 1) Compactación (Profundidad y Ancho) 
-
-**Qué mide** 
-- **Profundidad (m):** largo del bloque del equipo (distancia entre la última línea y el jugador más adelantado). 
-- **Ancho (m):** apertura lateral del equipo. 
-
-**Cómo leer el gráfico** 
-- **Picos** de profundidad = el equipo **se estira** (transición / ataque rápido). 
-- **Valles** de profundidad = equipo **compacto** (bloque defensivo). 
-- **Ancho alto** = ocupa bandas / abre el campo. 
-- **Ancho bajo** = cierra espacios interiores / defensa más junta. 
-
-**Ejemplos futboleros** 
-- Profundidad ↑ + Ancho ↑ → **contraataque / equipo lanzado** 
-- Profundidad ↓ + Ancho ↓ → **repliegue + bloque compacto** 
-- Ancho ↑ pero profundidad estable → **circulación y amplitud** (ataque posicional) 
-- Profundidad ↑ con ancho ↓ → **juego directo por carril central** 
-
-**Uso en Scouting (qué podés detectar)** 
-- Equipos **verticales** vs **posicionales** 
-- Nivel de **disciplina táctica** (oscilación vs estabilidad) 
-- Momentos de **transición** (cuándo se estiran y por qué) 
-- “Firma” de estilo: bloque alto/medio/bajo y amplitud habitual 
-
---- 
-
-## 2) Línea Defensiva 
-
-**Qué mide** 
-- Altura del bloque defensivo (metros). Indica si el equipo defiende alto o bajo. 
-
-**Cómo leer** 
-- Línea alta sostenida → **presión alta** / achique / intención de recuperar rápido. 
-- Línea baja sostenida → **bloque bajo** / repliegue / protección del área. 
-- Subidas y bajadas bruscas → equipo **reactivo**, o partido “partido”. 
-
-**Ejemplos futboleros** 
-- Línea defensiva sube mientras compactación baja → **presión + equipo junto** 
-- Línea defensiva baja y profundidad alta → **equipo largo** (riesgo entre líneas) 
-
-**Uso en Scouting** 
-- Detectar si el equipo juega al **offside** o defiende en **bloque bajo** 
-- Identificar vulnerabilidad a **pelotas largas** 
-- Analizar coherencia: línea alta sin compactación suele ser riesgo 
-
---- 
-
-## 3) Formación Detectada (aproximada) 
-
-**Qué representa** 
-- La formación “más frecuente” estimada por clustering de posiciones. 
-
-**Cómo leer** 
-- Se muestra como **aprox** porque en broadcast: 
-  - faltan jugadores por oclusión, 
-  - el equipo cambia de fase (defiende 4-4-2 y ataca 2-3-5, por ejemplo). 
-
-**Uso en Scouting** 
-- Sistema base (4-3-3 / 4-2-3-1 / 3-5-2) 
-- Cambios estructurales: “¿se transforma en ataque?” 
-- Señales de entrenador: extremos altos, carrileros, doble 5, etc. 
-
---- 
-
-## 4) Velocidad y Distancia 
-
-**Qué mide** 
-- Distancia total (y promedio por jugador). 
-- Velocidad máxima y sprints (aproximados). 
-
-**Cómo leer** 
-- Distancia ↑ → equipo con más **actividad** (presión, ida y vuelta). 
-- Sprints ↑ → partido más **vertical** o presión intensa. 
-
-**Nota Beta** 
-- Picos extremos pueden venir de tracking. En demo la velocidad máxima se muestra dentro de rangos humanos plausibles y se marca si fue “cappeada”. 
-
-**Uso en Scouting** 
-- Intensidad del equipo y del ritmo del partido 
-- Comparar estilos: presión constante vs bloque y salida 
-- Detectar tramos de alta exigencia (minutos “calientes”) 
-
---- 
-
-## 5) Heatmap (Mapa de Calor) 
-
-**Qué muestra** 
-- Zonas del campo donde el equipo **más ocupó** (por presencia de jugadores). 
-
-**Cómo leer** 
-- Zonas “calientes” = mayor permanencia / control territorial 
-- Banda cargada = preferencia por sector / ataques repetidos 
-- Distribución alta = presión territorial 
-- Distribución baja = repliegue / defensa cerca del área 
-
-**Uso en Scouting** 
-- Identificar banda preferida y patrones de ocupación 
-- Ver si el equipo juega ancho o se centraliza 
-- Contextualizar: “¿dónde intenta progresar y dónde recupera?” 
-""")
+        render_section_title("Interpretation Guide")
+        st.subheader("Interpretación")
+        st.markdown(INTERPRETATION_MARKDOWN)
 
     # Possession Tab
     with tabs[6]:
@@ -1411,7 +1272,8 @@ if uploaded_video:
             possession = stats['possession']
             speed_dist = stats.get('speed_distance', {})
 
-            st.subheader("⚽ Posesión de Pelota")
+            render_section_title("Possession & Physical Output")
+            st.subheader("Posesión de pelota")
 
             col_p1, col_p2, col_p3 = st.columns(3)
             with col_p1:
@@ -1433,6 +1295,7 @@ if uploaded_video:
                 marker_colors=["#00FF00", "#00BFFF", "#888888"],
             )])
             fig_pie.update_layout(title="Distribución de Posesión")
+            apply_plotly_dark_theme(fig_pie)
             st.plotly_chart(fig_pie, use_container_width=True)
 
             # Mejora L: Timeline de posesión
@@ -1466,6 +1329,7 @@ if uploaded_video:
                     height=250,
                     margin=dict(t=40, b=30),
                 )
+                apply_plotly_dark_theme(fig_timeline)
                 st.plotly_chart(fig_timeline, use_container_width=True)
 
             # Mejora E: Estadísticas de pases
@@ -1548,7 +1412,8 @@ if uploaded_video:
             else:
                 st.warning("Activa 'Habilitar Análisis de Posesión' en el sidebar antes de procesar.")
 else:
-    st.info("👈 Sube un video para comenzar el análisis táctico")
+    render_status_card("Estado de sesión", "Sin video cargado")
+    st.info("Carga un video para comenzar el análisis táctico.")
 
 # Footer
 st.divider()
