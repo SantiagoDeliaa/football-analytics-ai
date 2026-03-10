@@ -533,6 +533,32 @@ def test_regression_processed_with_stats_renders_core_views(monkeypatch):
     assert recorder.dataframe_calls >= 2
 
 
+def test_regression_passes_section_visible_when_available(monkeypatch):
+    uploaded = FakeUploadedFile("demo.mp4", b"video")
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"stats": build_full_stats(), "video_processed": True},
+        },
+    )
+    assert "Pases y Pérdidas" in recorder.subheaders
+
+
+def test_regression_passes_section_hidden_when_empty(monkeypatch):
+    uploaded = FakeUploadedFile("demo.mp4", b"video")
+    stats = build_full_stats()
+    stats["possession"]["passes"] = {"total": 0, "team1_passes": 0, "team2_passes": 0, "turnovers": 0}
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"stats": stats, "video_processed": True},
+        },
+    )
+    assert "Pases y Pérdidas" not in recorder.subheaders
+
+
 def test_regression_partial_stats_do_not_break_render(monkeypatch):
     uploaded = FakeUploadedFile("demo.mp4", b"video")
     partial_stats = {
