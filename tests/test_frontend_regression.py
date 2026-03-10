@@ -500,7 +500,7 @@ def test_smoke_app_imports_without_video(monkeypatch):
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
     uploaded = FakeUploadedFile("demo.mp4", b"video")
     recorder = run_app(monkeypatch, {"uploaded_video": uploaded, "session_state": {}})
-    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"]
+    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Guía", "Posesión"]
 
 
 def test_regression_video_loaded_not_processed_shows_safe_state(monkeypatch):
@@ -527,7 +527,7 @@ def test_regression_processed_with_stats_renders_core_views(monkeypatch):
     )
     assert "Exportar datos" in recorder.subheaders
     assert "Scouting" in recorder.subheaders
-    assert "Interpretación" in recorder.subheaders
+    assert "Guía de interpretación" in recorder.subheaders
     assert "Posesión de pelota" in recorder.subheaders
     assert recorder.plotly_calls >= 2
     assert recorder.dataframe_calls >= 2

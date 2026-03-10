@@ -579,7 +579,7 @@ if uploaded_video:
         f.write(uploaded_video.read())
 
     # Tabs for organization
-    tabs = st.tabs(["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"])
+    tabs = st.tabs(["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Guía", "Posesión"])
 
     with tabs[0]:
         col_input, col_output = st.columns(2)
@@ -1262,7 +1262,7 @@ if uploaded_video:
             st.warning("Scouting metrics not available for this video.")
     with tabs[5]:
         render_section_title("Interpretation Guide")
-        st.subheader("Interpretación")
+        st.subheader("Guía de interpretación")
         st.markdown(INTERPRETATION_MARKDOWN)
 
     # Possession Tab
@@ -1417,5 +1417,13 @@ else:
 
 # Footer
 st.divider()
-st.caption("Soccer Analytics AI - Sistema de Análisis Táctico Completo")
-st.caption("Tracking + Formaciones + Métricas de Comportamiento Colectivo")
+st.markdown(
+    """
+    <div class="platform-footer">
+        <span><strong>FTI Platform</strong></span>
+        <span class="footer-pill">Premium Tactical Analytics</span>
+        <span>Tracking avanzado · Scouting táctico · Exportes ejecutivos</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
