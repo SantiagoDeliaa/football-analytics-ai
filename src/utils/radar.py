@@ -304,7 +304,7 @@ def draw_radar_view(
 
     colors = {
         'team1': (0, 255, 0),     # Green (BGR) -> Lime
-        'team2': (255, 191, 0),   # Sky Blueish (BGR)
+        'team2': (255, 255, 0),   # Cyan (BGR) -> #00FFFF
         'ball': (0, 0, 255),      # Red
         'referee': (0, 215, 255), # Gold
         'goalkeeper': (182, 89, 155) # Purple

@@ -40,10 +40,7 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
-MIN_PROJECTION_CONFIDENCE = 0.45
-
-
-def convert_to_native_types(obj):
+from src.utils.quality_config import (
     """
     Convierte tipos de NumPy a tipos nativos de Python para serialización JSON.
 
@@ -744,22 +741,6 @@ def classify_person_smart(
         return ('team2', 2)
 
 
-def filter_detections_by_confidence(dets: sv.Detections, min_confidence: float) -> sv.Detections:
-    if dets is None or len(dets) == 0:
-        return dets
-    confidences = getattr(dets, "confidence", None)
-    if confidences is None:
-        return dets
-    try:
-        valid_mask = np.array(confidences) >= float(min_confidence)
-    except Exception:
-        return dets
-    try:
-        return dets[valid_mask]
-    except Exception:
-        return dets
-
-
 def process_video(
     source_path: str,
     target_path: str,
@@ -847,9 +828,9 @@ def process_video(
     team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=1, trace_length=30)
     team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
 
-    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00BFFF"), thickness=2)
-    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00BFFF"), thickness=1, trace_length=30)
-    team2_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.WHITE, text_padding=3)
+    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FFFF"), thickness=2)
+    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00FFFF"), thickness=1, trace_length=30)
+    team2_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
 
     goalkeeper_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#9B59B6"), thickness=2)
     goalkeeper_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.WHITE, text_padding=3)
@@ -1500,28 +1481,23 @@ def process_video(
                                 smoothed.append(avg_pos)
                             return np.array(smoothed)
 
-                        # Referee projection/metrics patch: confidence gating antes de proyección táctica
                         # Transformar y suavizar team1 (con flip_x para corregir inversión)
                         if any(team1_mask):
                             t1_dets = tracked_persons[np.array(team1_mask)]
-                            t1_dets = filter_detections_by_confidence(t1_dets, MIN_PROJECTION_CONFIDENCE)
-                            if len(t1_dets) > 0:
-                                raw_pos = transformer.transform_points(get_bottom_center(t1_dets), flip_x=True)
-                                if t1_dets.tracker_id is not None:
-                                    points_to_transform['team1'] = smooth_positions(t1_dets.tracker_id, raw_pos)
-                                else:
-                                    points_to_transform['team1'] = raw_pos
+                            raw_pos = transformer.transform_points(get_bottom_center(t1_dets), flip_x=True)
+                            if t1_dets.tracker_id is not None:
+                                points_to_transform['team1'] = smooth_positions(t1_dets.tracker_id, raw_pos)
+                            else:
+                                points_to_transform['team1'] = raw_pos
 
                         # Transformar y suavizar team2 (con flip_x para corregir inversión)
                         if any(team2_mask):
                             t2_dets = tracked_persons[np.array(team2_mask)]
-                            t2_dets = filter_detections_by_confidence(t2_dets, MIN_PROJECTION_CONFIDENCE)
-                            if len(t2_dets) > 0:
-                                raw_pos = transformer.transform_points(get_bottom_center(t2_dets), flip_x=True)
-                                if t2_dets.tracker_id is not None:
-                                    points_to_transform['team2'] = smooth_positions(t2_dets.tracker_id, raw_pos)
-                                else:
-                                    points_to_transform['team2'] = raw_pos
+                            raw_pos = transformer.transform_points(get_bottom_center(t2_dets), flip_x=True)
+                            if t2_dets.tracker_id is not None:
+                                points_to_transform['team2'] = smooth_positions(t2_dets.tracker_id, raw_pos)
+                            else:
+                                points_to_transform['team2'] = raw_pos
                         
                         if 'team1' in points_to_transform and len(points_to_transform['team1']) > 0:
                             t1_arr = points_to_transform['team1']
@@ -1700,7 +1676,6 @@ def process_video(
                             formations_timeline['team1'].append(formation1)
 
                             if not metrics_blocked:
-                                # Referee projection/metrics patch: solo team1 filtrado por confianza.
                                 metrics1 = metrics_calculator.calculate_all_metrics(points_to_transform['team1'])
                                 team1_tracker.update(metrics1, frame_count)
 
@@ -1723,7 +1698,6 @@ def process_video(
                             formations_timeline['team2'].append(formation2)
                             
                             if not metrics_blocked:
-                                # Referee projection/metrics patch: solo team2 filtrado por confianza.
                                 metrics2 = metrics_calculator.calculate_all_metrics(points_to_transform['team2'])
                                 team2_tracker.update(metrics2, frame_count)
                         
@@ -1840,7 +1814,7 @@ def process_video(
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
                         if team2_centroid is not None:
                             cx, cy = radar_px(team2_centroid[0], team2_centroid[1])
-                            cv2.circle(radar_view, (cx, cy), 10, (255, 191, 0), -1)
+                            cv2.circle(radar_view, (cx, cy), 10, (255, 255, 0), -1)
                             cv2.putText(radar_view, f"T2 ({team2_centroid[0]:.1f},{team2_centroid[1]:.1f})", (cx + 8, cy - 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
