@@ -40,7 +40,9 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
-from src.utils.quality_config import (
+REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 35.0
+
+def convert_to_native_types(obj):
     """
     Convierte tipos de NumPy a tipos nativos de Python para serialización JSON.
 
@@ -328,6 +330,51 @@ def extract_color_features(frame: np.ndarray, bbox: np.ndarray) -> Dict[str, np.
         'combined': np.concatenate([shirt_color, pants_color]),
         'color_variance': color_variance
     }
+
+
+def should_render_referee_overlay(
+    frame: np.ndarray,
+    bbox: np.ndarray,
+    team1_colors: Dict,
+    team2_colors: Dict,
+    distance_threshold: float = REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD,
+) -> bool:
+    # Ajustar este umbral para calibrar qué tan estricto es el filtro visual de referee.
+    try:
+        if team1_colors is None or team2_colors is None:
+            return False
+        team1_shirt = team1_colors.get("shirt")
+        team2_shirt = team2_colors.get("shirt")
+        if team1_shirt is None or team2_shirt is None:
+            return False
+
+        features = extract_color_features(frame, bbox)
+        candidate_shirt = features.get("shirt")
+        if candidate_shirt is None:
+            return False
+
+        candidate_shirt = np.asarray(candidate_shirt, dtype=np.float32)
+        team1_shirt = np.asarray(team1_shirt, dtype=np.float32)
+        team2_shirt = np.asarray(team2_shirt, dtype=np.float32)
+        if (
+            candidate_shirt.shape[0] != 3
+            or team1_shirt.shape[0] != 3
+            or team2_shirt.shape[0] != 3
+            or np.any(np.isnan(candidate_shirt))
+            or np.any(np.isnan(team1_shirt))
+            or np.any(np.isnan(team2_shirt))
+        ):
+            return False
+
+        if float(np.linalg.norm(candidate_shirt)) < 1.0:
+            return False
+
+        dist_team1 = float(np.linalg.norm(candidate_shirt - team1_shirt))
+        dist_team2 = float(np.linalg.norm(candidate_shirt - team2_shirt))
+        min_team_dist = min(dist_team1, dist_team2)
+        return min_team_dist >= float(distance_threshold)
+    except Exception:
+        return False
 
 
 def is_in_playing_field(bbox: np.ndarray, frame_width: int, frame_height: int) -> bool:
@@ -1232,7 +1279,7 @@ def process_video(
 
             refs_detected_count = int(np.sum(referee_mask))
             players_detected_count = int(np.sum(team1_mask) + np.sum(team2_mask) + np.sum(goalkeeper_mask))
-            refs_filtered_out_count = refs_detected_count
+            refs_filtered_out_count = 0
             
             # Anotar
             if any(team1_mask):
@@ -1260,10 +1307,28 @@ def process_video(
 
             if any(referee_mask):
                 ref_dets = tracked_persons[np.array(referee_mask)]
-                annotated_frame = referee_annotator.annotate(scene=annotated_frame, detections=ref_dets)
-                if ref_dets.tracker_id is not None:
-                    labels = [f"Referee #{tid}" for tid in ref_dets.tracker_id]
-                    annotated_frame = referee_label_annotator.annotate(scene=annotated_frame, detections=ref_dets, labels=labels)
+                referee_render_mask = np.array([
+                    should_render_referee_overlay(
+                        frame=frame,
+                        bbox=bbox,
+                        team1_colors=team1_colors,
+                        team2_colors=team2_colors,
+                        distance_threshold=REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD,
+                    )
+                    for bbox in ref_dets.xyxy
+                ], dtype=bool)
+                refs_filtered_out_count = int(np.sum(~referee_render_mask))
+
+                if any(referee_render_mask):
+                    visible_ref_dets = ref_dets[referee_render_mask]
+                    annotated_frame = referee_annotator.annotate(scene=annotated_frame, detections=visible_ref_dets)
+                    if visible_ref_dets.tracker_id is not None:
+                        labels = [f"Referee #{tid}" for tid in visible_ref_dets.tracker_id]
+                        annotated_frame = referee_label_annotator.annotate(
+                            scene=annotated_frame,
+                            detections=visible_ref_dets,
+                            labels=labels
+                        )
 
             # --- TRACKING DE PELOTA + KALMAN (Mejora A + F) ---
             tracked_ball = None
