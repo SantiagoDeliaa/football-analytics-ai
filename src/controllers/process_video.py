@@ -40,7 +40,13 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
-REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 40.0
+REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 45.0
+REFEREE_SHIRT_CYAN_HUE_MIN = 75.0
+REFEREE_SHIRT_CYAN_HUE_MAX = 105.0
+REFEREE_SHIRT_CYAN_SAT_MIN = 35.0
+REFEREE_SHIRT_CYAN_VAL_MIN = 85.0
+REFEREE_PANTS_DARK_VAL_MAX = 90.0
+REFEREE_PANTS_DARK_SAT_MAX = 120.0
 RIVER_DISPLAY_NAME = "River"
 TIGRE_DISPLAY_NAME = "Tigre"
 RIVER_COLOR_HEX = "#E8EDF2"
@@ -357,23 +363,44 @@ def should_render_referee_overlay(
 
         features = extract_color_features(frame, bbox)
         candidate_shirt = features.get("shirt")
-        if candidate_shirt is None:
+        candidate_pants = features.get("pants")
+        if candidate_shirt is None or candidate_pants is None:
             return False
 
         candidate_shirt = np.asarray(candidate_shirt, dtype=np.float32)
+        candidate_pants = np.asarray(candidate_pants, dtype=np.float32)
         team1_shirt = np.asarray(team1_shirt, dtype=np.float32)
         team2_shirt = np.asarray(team2_shirt, dtype=np.float32)
         if (
             candidate_shirt.shape[0] != 3
+            or candidate_pants.shape[0] != 3
             or team1_shirt.shape[0] != 3
             or team2_shirt.shape[0] != 3
             or np.any(np.isnan(candidate_shirt))
+            or np.any(np.isnan(candidate_pants))
             or np.any(np.isnan(team1_shirt))
             or np.any(np.isnan(team2_shirt))
         ):
             return False
 
         if float(np.linalg.norm(candidate_shirt)) < 1.0:
+            return False
+        if float(np.linalg.norm(candidate_pants)) < 1.0:
+            return False
+
+        shirt_h, shirt_s, shirt_v = candidate_shirt
+        pants_s = float(candidate_pants[1])
+        pants_v = float(candidate_pants[2])
+        shirt_is_cyan = (
+            REFEREE_SHIRT_CYAN_HUE_MIN <= float(shirt_h) <= REFEREE_SHIRT_CYAN_HUE_MAX
+            and float(shirt_s) >= REFEREE_SHIRT_CYAN_SAT_MIN
+            and float(shirt_v) >= REFEREE_SHIRT_CYAN_VAL_MIN
+        )
+        pants_are_dark = (
+            pants_v <= REFEREE_PANTS_DARK_VAL_MAX
+            and pants_s <= REFEREE_PANTS_DARK_SAT_MAX
+        )
+        if not (shirt_is_cyan and pants_are_dark):
             return False
 
         dist_team1 = float(np.linalg.norm(candidate_shirt - team1_shirt))
@@ -930,7 +957,7 @@ def process_video(
     # Mejora H: historial de posiciones para trails en radar
     TRAIL_LENGTH = 15
     ball_trail = deque(maxlen=TRAIL_LENGTH)  # deque de (x, y)
-    debug_homography_overlay: bool = True
+    debug_homography_overlay: bool = False
     heatmap_bins_team1 = np.zeros((53, 34), dtype=np.float32)
     heatmap_bins_team2 = np.zeros((53, 34), dtype=np.float32)
     heatmap_sample_every = 5
