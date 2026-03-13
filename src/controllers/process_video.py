@@ -40,7 +40,14 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
-REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 35.0
+REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 40.0
+RIVER_DISPLAY_NAME = "River"
+TIGRE_DISPLAY_NAME = "Tigre"
+RIVER_COLOR_HEX = "#E8EDF2"
+TIGRE_COLOR_HEX = "#00D9FF"
+REFEREE_COLOR_HEX = "#FF8C00"
+RIVER_COLOR_BGR = (242, 237, 232)
+TIGRE_COLOR_BGR = (255, 217, 0)
 
 def convert_to_native_types(obj):
     """
@@ -871,19 +878,37 @@ def process_video(
             homography_manager.max_inertia_frames = 0
 
     # Mejora J: Anotadores estilo broadcast (elipse + trace)
-    team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=2)
-    team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00FF00"), thickness=1, trace_length=30)
-    team1_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
+    team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(RIVER_COLOR_HEX), thickness=2)
+    team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(RIVER_COLOR_HEX), thickness=1, trace_length=30)
+    team1_label_annotator = sv.LabelAnnotator(
+        color=sv.Color.from_hex(RIVER_COLOR_HEX),
+        text_scale=0.5,
+        text_thickness=1,
+        text_color=sv.Color.BLACK,
+        text_padding=3
+    )
 
-    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#00FFFF"), thickness=2)
-    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex("#00FFFF"), thickness=1, trace_length=30)
-    team2_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
+    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(TIGRE_COLOR_HEX), thickness=2)
+    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(TIGRE_COLOR_HEX), thickness=1, trace_length=30)
+    team2_label_annotator = sv.LabelAnnotator(
+        color=sv.Color.from_hex(TIGRE_COLOR_HEX),
+        text_scale=0.5,
+        text_thickness=1,
+        text_color=sv.Color.BLACK,
+        text_padding=3
+    )
 
     goalkeeper_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#9B59B6"), thickness=2)
     goalkeeper_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.WHITE, text_padding=3)
 
-    referee_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex("#FFD700"), thickness=2)
-    referee_label_annotator = sv.LabelAnnotator(text_scale=0.5, text_thickness=1, text_color=sv.Color.BLACK, text_padding=3)
+    referee_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(REFEREE_COLOR_HEX), thickness=2)
+    referee_label_annotator = sv.LabelAnnotator(
+        color=sv.Color.from_hex(REFEREE_COLOR_HEX),
+        text_scale=0.5,
+        text_thickness=1,
+        text_color=sv.Color.BLACK,
+        text_padding=3
+    )
 
     ball_annotator = sv.BoxAnnotator(color=sv.Color.from_hex("#FF0000"), thickness=3)
     ball_label_annotator = sv.LabelAnnotator(text_scale=0.6, text_thickness=2, text_color=sv.Color.WHITE, text_padding=4)
@@ -1287,7 +1312,7 @@ def process_video(
                 annotated_frame = team1_annotator.annotate(scene=annotated_frame, detections=t1_dets)
                 annotated_frame = team1_trace_annotator.annotate(scene=annotated_frame, detections=t1_dets)
                 if t1_dets.tracker_id is not None:
-                    labels = [f"Team 1 #{tid}" for tid in t1_dets.tracker_id]
+                    labels = [f"{RIVER_DISPLAY_NAME} #{tid}" for tid in t1_dets.tracker_id]
                     annotated_frame = team1_label_annotator.annotate(scene=annotated_frame, detections=t1_dets, labels=labels)
 
             if any(team2_mask):
@@ -1295,7 +1320,7 @@ def process_video(
                 annotated_frame = team2_annotator.annotate(scene=annotated_frame, detections=t2_dets)
                 annotated_frame = team2_trace_annotator.annotate(scene=annotated_frame, detections=t2_dets)
                 if t2_dets.tracker_id is not None:
-                    labels = [f"Team 2 #{tid}" for tid in t2_dets.tracker_id]
+                    labels = [f"{TIGRE_DISPLAY_NAME} #{tid}" for tid in t2_dets.tracker_id]
                     annotated_frame = team2_label_annotator.annotate(scene=annotated_frame, detections=t2_dets, labels=labels)
 
             if any(goalkeeper_mask):
@@ -1400,7 +1425,6 @@ def process_video(
                 possession_result = possession_tracker.assign_possession(
                     tracked_persons, team1_mask, team2_mask, tracked_ball
                 )
-                annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
             # --- RADAR ---
             max_speed_mps = None
@@ -1611,12 +1635,6 @@ def process_video(
                                             points_to_transform[team_key],
                                             [team_key] * len(team_dets),
                                         )
-                                        for j, tid in enumerate(team_dets.tracker_id):
-                                            if tid in speed_data and speed_data[tid]['speed_kmh'] > 2.0:
-                                                annotated_frame = speed_estimator.draw_player_speed(
-                                                    annotated_frame, tid, team_dets.xyxy[j],
-                                                    speed_data[tid]['speed_kmh'],
-                                                )
                         speed_samples_mps = []
                         if not metrics_blocked:
                             for team_key in ('team1', 'team2'):
@@ -1677,7 +1695,6 @@ def process_video(
                                     ball_field,
                                 )
                                 _possession_assigned_metric = True
-                            annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
                         # --- ACTUALIZACIÓN DE MÉTRICAS TÁCTICAS ---
                         if team1_centroid is not None and homography_state == "STABLE" and cut_cooldown == 0:
@@ -1874,12 +1891,12 @@ def process_video(
                             return x, y
                         if team1_centroid is not None:
                             cx, cy = radar_px(team1_centroid[0], team1_centroid[1])
-                            cv2.circle(radar_view, (cx, cy), 10, (0, 255, 0), -1)
+                            cv2.circle(radar_view, (cx, cy), 10, RIVER_COLOR_BGR, -1)
                             cv2.putText(radar_view, f"T1 ({team1_centroid[0]:.1f},{team1_centroid[1]:.1f})", (cx + 8, cy - 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
                         if team2_centroid is not None:
                             cx, cy = radar_px(team2_centroid[0], team2_centroid[1])
-                            cv2.circle(radar_view, (cx, cy), 10, (255, 255, 0), -1)
+                            cv2.circle(radar_view, (cx, cy), 10, TIGRE_COLOR_BGR, -1)
                             cv2.putText(radar_view, f"T2 ({team2_centroid[0]:.1f},{team2_centroid[1]:.1f})", (cx + 8, cy - 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -2206,7 +2223,6 @@ def process_video(
                 possession_result = possession_tracker.assign_possession(
                     tracked_persons, team1_mask, team2_mask, tracked_ball
                 )
-                annotated_frame = possession_tracker.draw_possession_bar(annotated_frame)
 
             if debug_homography_overlay:
                 state = getattr(homography_manager, 'last_state', "")
