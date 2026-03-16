@@ -47,6 +47,8 @@ REFEREE_SHIRT_CYAN_SAT_MIN = 35.0
 REFEREE_SHIRT_CYAN_VAL_MIN = 85.0
 REFEREE_PANTS_DARK_VAL_MAX = 90.0
 REFEREE_PANTS_DARK_SAT_MAX = 120.0
+WATERMARK_EXCLUDE_X_MIN_RATIO = 0.85
+WATERMARK_EXCLUDE_Y_MIN_RATIO = 0.80
 RIVER_DISPLAY_NAME = "River"
 TIGRE_DISPLAY_NAME = "Tigre"
 RIVER_COLOR_HEX = "#E8EDF2"
@@ -452,6 +454,21 @@ def is_in_playing_field(bbox: np.ndarray, frame_width: int, frame_height: int) -
             return False
 
     return True
+
+
+def detection_in_watermark_zone(
+    bbox: np.ndarray,
+    frame_width: int,
+    frame_height: int,
+    x_min_ratio: float = WATERMARK_EXCLUDE_X_MIN_RATIO,
+    y_min_ratio: float = WATERMARK_EXCLUDE_Y_MIN_RATIO,
+) -> bool:
+    x1, y1, x2, y2 = bbox
+    center_x = (x1 + x2) / 2.0
+    center_y = (y1 + y2) / 2.0
+    x_min = float(frame_width) * float(x_min_ratio)
+    y_min = float(frame_height) * float(y_min_ratio)
+    return center_x >= x_min and center_y >= y_min
 
 
 def is_in_goal_area(bbox: np.ndarray, frame_width: int, frame_height: int) -> bool:
@@ -1142,6 +1159,12 @@ def process_video(
             if player_detections.class_id is not None:
                 mask = np.isin(player_detections.class_id, player_class_ids)
                 player_detections = player_detections[mask]
+            if len(player_detections) > 0:
+                keep_mask = np.array([
+                    not detection_in_watermark_zone(xyxy, width, height)
+                    for xyxy in player_detections.xyxy
+                ], dtype=bool)
+                player_detections = player_detections[keep_mask]
             
             # --- DETECCIÓN DE PELOTA MEJORADA ---
             ball_detections = sv.Detections.empty()
