@@ -1337,7 +1337,6 @@ def process_video(
             if any(team1_mask):
                 t1_dets = tracked_persons[np.array(team1_mask)]
                 annotated_frame = team1_annotator.annotate(scene=annotated_frame, detections=t1_dets)
-                annotated_frame = team1_trace_annotator.annotate(scene=annotated_frame, detections=t1_dets)
                 if t1_dets.tracker_id is not None:
                     labels = [f"{RIVER_DISPLAY_NAME} #{tid}" for tid in t1_dets.tracker_id]
                     annotated_frame = team1_label_annotator.annotate(scene=annotated_frame, detections=t1_dets, labels=labels)
@@ -1345,7 +1344,6 @@ def process_video(
             if any(team2_mask):
                 t2_dets = tracked_persons[np.array(team2_mask)]
                 annotated_frame = team2_annotator.annotate(scene=annotated_frame, detections=t2_dets)
-                annotated_frame = team2_trace_annotator.annotate(scene=annotated_frame, detections=t2_dets)
                 if t2_dets.tracker_id is not None:
                     labels = [f"{TIGRE_DISPLAY_NAME} #{tid}" for tid in t2_dets.tracker_id]
                     annotated_frame = team2_label_annotator.annotate(scene=annotated_frame, detections=t2_dets, labels=labels)
