@@ -40,7 +40,7 @@ from src.utils.quality_config import (
 )
 from ultralytics import YOLO
 
-REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 45.0
+REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 50.0
 REFEREE_SHIRT_CYAN_HUE_MIN = 75.0
 REFEREE_SHIRT_CYAN_HUE_MAX = 105.0
 REFEREE_SHIRT_CYAN_SAT_MIN = 35.0
@@ -1375,7 +1375,7 @@ def process_video(
                     visible_ref_dets = ref_dets[referee_render_mask]
                     annotated_frame = referee_annotator.annotate(scene=annotated_frame, detections=visible_ref_dets)
                     if visible_ref_dets.tracker_id is not None:
-                        labels = [f"Referee #{tid}" for tid in visible_ref_dets.tracker_id]
+                        labels = ["Referee" for _ in visible_ref_dets.tracker_id]
                         annotated_frame = referee_label_annotator.annotate(
                             scene=annotated_frame,
                             detections=visible_ref_dets,
