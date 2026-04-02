@@ -3,6 +3,7 @@ import json
 
 from src.services.event_normalizer import normalize_event_data
 from src.services.pdf_ingestion import ingest_pdf
+from src.services.proprietary_metrics import calculate_proprietary_metrics
 
 
 def render_vertical2() -> None:
@@ -22,6 +23,7 @@ def render_vertical2() -> None:
     with st.spinner("Procesando reporte PDF..."):
         raw_payload = ingest_pdf(uploaded_pdf)
         normalized_payload = normalize_event_data(raw_payload)
+        proprietary_metrics = calculate_proprietary_metrics(normalized_payload, raw_payload)
 
     st.subheader("Estado del procesamiento")
     st.markdown(f"**Archivo:** {raw_payload.get('file_name', 'unknown.pdf')}")
@@ -35,6 +37,21 @@ def render_vertical2() -> None:
     for message in raw_payload.get("messages", []):
         st.caption(message)
 
+    st.subheader("Proprietary Metrics MVP")
+    metric_order = [
+        "field_tilt_index",
+        "directness_index",
+        "pressing_efficiency",
+        "risk_exposure_score",
+    ]
+    metric_columns = st.columns(4)
+    for idx, metric_key in enumerate(metric_order):
+        metric_data = proprietary_metrics.get(metric_key, {})
+        with metric_columns[idx]:
+            st.metric(metric_data.get("label", "Metric"), f"{metric_data.get('score', 0)}")
+            st.caption(metric_data.get("description", "Métrica no disponible."))
+            st.caption(f"Nivel: {metric_data.get('category', 'Medium')}")
+
     preview = {
         "status": normalized_payload.get("status", "warning"),
         "match_info": normalized_payload.get("match_info", {}),
@@ -44,6 +61,7 @@ def render_vertical2() -> None:
         "transitions": normalized_payload.get("transitions", {}),
         "build_up": normalized_payload.get("build_up", {}),
         "finishing": normalized_payload.get("finishing", {}),
+        "proprietary_metrics": proprietary_metrics,
     }
 
     st.subheader("Preview del schema normalizado")

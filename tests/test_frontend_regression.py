@@ -607,8 +607,16 @@ def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
         },
     )
     assert any("Archivo:** wyscout_report.pdf" in item for item in recorder.markdowns)
+    metric_labels = [label for label, _ in recorder.metrics]
+    assert metric_labels == [
+        "Territorial Control",
+        "Verticality",
+        "High Press Impact",
+        "Build-Up Risk",
+    ]
     assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
     assert any('"match_info"' in item for item in recorder.markdowns)
+    assert any('"proprietary_metrics"' in item for item in recorder.markdowns)
 
 
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
@@ -714,6 +722,32 @@ def test_event_normalizer_returns_stable_schema_keys_on_fallback():
         "finishing",
     }
     assert normalized["status"] == "warning"
+
+
+def test_proprietary_metrics_returns_four_scores_in_valid_range():
+    from src.services.proprietary_metrics import calculate_proprietary_metrics
+
+    normalized = {
+        "attack": {"signals": {"final third": 3, "box entries": 2, "shots": 4}},
+        "defense": {"signals": {"pressing": 2, "recoveries": 3}},
+        "transitions": {"signals": {"direct attack": 1, "counter": 2, "regain": 3, "turnover": 1}},
+        "build_up": {"signals": {"progression": 4, "possession": 2}},
+        "finishing": {"signals": {"on target": 2}},
+        "meta": {"sections_detected": {"attack": 2, "build_up": 2}},
+    }
+    raw = {"raw_text": "Possession: 62%"}
+    metrics = calculate_proprietary_metrics(normalized, raw)
+    assert set(metrics.keys()) == {
+        "field_tilt_index",
+        "directness_index",
+        "pressing_efficiency",
+        "risk_exposure_score",
+    }
+    for metric in metrics.values():
+        assert 0 <= metric["score"] <= 100
+        assert metric["label"]
+        assert metric["description"]
+        assert metric["category"] in {"Low", "Medium", "High"}
 
 
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):
