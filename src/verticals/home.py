@@ -62,15 +62,13 @@ def render_home() -> str | None:
             .tip-accent {
                 color: #1dd790;
                 font-weight: 800;
-                text-shadow: 0 0 18px rgba(29, 215, 144, 0.22);
             }
             .tip-wordmark {
-                margin-top: 0.9rem;
-                font-size: 0.9rem;
-                letter-spacing: 0.44em;
-                color: #86f0c4;
-                text-transform: uppercase;
-                font-weight: 700;
+                display: none;
+            }
+            .tip-inline-tip {
+                color: #1dd790;
+                font-weight: 800;
             }
             div[data-testid="column"] {
                 position: relative;
@@ -83,15 +81,27 @@ def render_home() -> str | None:
                 border-radius: 24px;
                 border: 1px solid rgba(140, 160, 188, 0.24);
                 box-shadow: 0 16px 36px rgba(5, 9, 15, 0.45);
-                color: #f3f7fd;
-                font-size: 1.08rem;
-                font-weight: 700;
-                line-height: 1.55;
+                color: #c5cfdd;
+                font-size: 0.95rem;
+                font-weight: 500;
+                line-height: 1.62;
                 white-space: pre-line;
                 text-align: center;
                 transition: transform 260ms ease-out, box-shadow 280ms ease-out, border-color 240ms ease-out;
                 overflow: hidden;
                 backdrop-filter: blur(2px);
+                display: flex;
+                align-items: flex-start;
+                justify-content: center;
+            }
+            div[data-testid="column"] .stButton > button p {
+                margin-top: 0.1rem;
+            }
+            div[data-testid="column"] .stButton > button p::first-line {
+                color: #eef4fb;
+                font-size: 1.44rem;
+                font-weight: 800;
+                line-height: 1.25;
             }
             div[data-testid="column"] .stButton > button::before {
                 content: "";
@@ -154,8 +164,7 @@ def render_home() -> str | None:
         """
         <div class="tip-shell">
             <div class="tip-hero">
-                <h1 class="tip-title">Tactical Intelligence Platform</h1>
-                <div class="tip-wordmark">(<span class="tip-accent">TIP</span>)</div>
+                <h1 class="tip-title"><span class="tip-accent">T</span>actical <span class="tip-accent">I</span>ntelligence <span class="tip-accent">P</span>latform <span class="tip-inline-tip">(<span class="tip-accent">TIP</span>)</span></h1>
             </div>
         </div>
         """,
