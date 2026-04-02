@@ -92,6 +92,9 @@ class FakeSidebar:
         self.recorder.sidebar_file_uploaders.append(label)
         return self.config.get("file_uploader", {}).get(label, None)
 
+    def button(self, label, **kwargs):
+        return self.config.get("button", {}).get(label, False)
+
     def success(self, text):
         self.recorder.success_messages.append(str(text))
 
@@ -374,6 +377,10 @@ def make_reportlab_modules():
 
 
 def run_app(monkeypatch, config):
+    session_state = dict(config.get("session_state", {}))
+    session_state.setdefault("active_vertical", "vertical1")
+    config = dict(config)
+    config["session_state"] = session_state
     st_module, recorder = make_streamlit_module(config)
     monkeypatch.setitem(sys.modules, "streamlit", st_module)
     monkeypatch.setitem(sys.modules, "ultralytics", make_ultralytics_module())
