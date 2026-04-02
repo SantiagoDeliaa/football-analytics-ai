@@ -42,10 +42,6 @@ class StopExecution(Exception):
     pass
 
 
-class QueryParams(dict):
-    pass
-
-
 class FakeProgress:
     def __init__(self, recorder):
         self.recorder = recorder
@@ -194,6 +190,10 @@ class StreamlitRecorder:
         return False
 
     def button(self, label, **kwargs):
+        button_config = self.config.get("button", {})
+        if isinstance(button_config, dict):
+            if label in button_config:
+                return button_config[label]
         return self.config.get("button_clicked", False)
 
     def checkbox(self, label, value=False, **kwargs):
@@ -285,7 +285,6 @@ def make_streamlit_module(config):
     module.expander = recorder.expander
     module.text = recorder.text
     module.code = recorder.code
-    module.query_params = QueryParams(config.get("query_params", {}))
     return module, recorder
 
 
@@ -548,25 +547,28 @@ def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     assert recorder.sidebar_subheaders == []
 
 
-def test_home_query_param_navigates_to_computer_vision(monkeypatch):
+def test_home_click_navigates_to_computer_vision(monkeypatch):
+    cv_label = "Computer Vision\nTracking and tactical metrics from broadcast video"
     recorder = run_app(
         monkeypatch,
         {
             "uploaded_video": None,
             "session_state": {"active_vertical": "home"},
-            "query_params": {"nav": "vertical1"},
+            "button": {cv_label: True},
         },
     )
     assert recorder.session_state.active_vertical == "vertical1"
 
 
-def test_home_query_param_navigates_to_data_analytics(monkeypatch):
+def test_home_click_navigates_to_data_analytics(monkeypatch):
+    cv_label = "Computer Vision\nTracking and tactical metrics from broadcast video"
+    da_label = "Data Analytics\nTactical insights and proprietary metrics from event data and reports"
     recorder = run_app(
         monkeypatch,
         {
             "uploaded_video": None,
             "session_state": {"active_vertical": "home"},
-            "query_params": {"nav": "vertical2"},
+            "button": {cv_label: False, da_label: True},
         },
     )
     assert recorder.session_state.active_vertical == "vertical2"
