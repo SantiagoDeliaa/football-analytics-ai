@@ -42,6 +42,10 @@ class StopExecution(Exception):
     pass
 
 
+class QueryParams(dict):
+    pass
+
+
 class FakeProgress:
     def __init__(self, recorder):
         self.recorder = recorder
@@ -281,6 +285,7 @@ def make_streamlit_module(config):
     module.expander = recorder.expander
     module.text = recorder.text
     module.code = recorder.code
+    module.query_params = QueryParams(config.get("query_params", {}))
     return module, recorder
 
 
@@ -529,7 +534,9 @@ def test_smoke_app_imports_without_video(monkeypatch):
 
 def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
     recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
-    assert "Football Analytics AI" in recorder.headers
+    assert any("Tactical Intelligence" in item for item in recorder.markdowns)
+    assert any("TIP" in item for item in recorder.markdowns)
+    assert not any("Selecciona una vertical para continuar" in item for item in recorder.markdowns)
     assert recorder.sidebar_subheaders == []
     assert recorder.file_uploaders == []
 
@@ -539,6 +546,30 @@ def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     assert "Vertical 2 — Data Analytics" in recorder.headers
     assert any("Próximamente" in msg for msg in recorder.info_messages)
     assert recorder.sidebar_subheaders == []
+
+
+def test_home_query_param_navigates_to_computer_vision(monkeypatch):
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "home"},
+            "query_params": {"nav": "vertical1"},
+        },
+    )
+    assert recorder.session_state.active_vertical == "vertical1"
+
+
+def test_home_query_param_navigates_to_data_analytics(monkeypatch):
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "home"},
+            "query_params": {"nav": "vertical2"},
+        },
+    )
+    assert recorder.session_state.active_vertical == "vertical2"
 
 
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
