@@ -7,6 +7,11 @@ ROUTE_HOME = "home"
 ROUTE_VERTICAL1 = "vertical1"
 ROUTE_VERTICAL2 = "vertical2"
 
+def _stop_execution() -> None:
+    stop_fn = getattr(st, "stop", None)
+    if callable(stop_fn):
+        stop_fn()
+
 if "active_vertical" not in st.session_state:
     st.session_state.active_vertical = ROUTE_HOME
 
@@ -14,18 +19,18 @@ route = st.session_state.active_vertical
 
 if route == ROUTE_VERTICAL1:
     render_vertical1()
+    _stop_execution()
 elif route == ROUTE_VERTICAL2:
     st.set_page_config(page_title="Soccer Analytics Platform", layout="wide", initial_sidebar_state="expanded")
     render_vertical2()
+    _stop_execution()
 else:
-    uploaded_player = st.sidebar.file_uploader("Subir modelo jugadores (.pt)", type=["pt"])
-    if uploaded_player:
-        p_path = Path("models") / uploaded_player.name
-        p_path.parent.mkdir(exist_ok=True)
-        with open(p_path, "wb") as f:
-            f.write(uploaded_player.read())
-        player_model = YOLO(p_path)
-        st.sidebar.success(f"Cargado: {uploaded_player.name}")
+    st.set_page_config(page_title="Soccer Analytics Platform", layout="wide", initial_sidebar_state="expanded")
+    selected_route = render_home()
+    if selected_route:
+        st.session_state.active_vertical = selected_route
+        st.rerun()
+    _stop_execution()
 
 # 2. BALL MODEL
 st.sidebar.subheader("Modelo de pelota")

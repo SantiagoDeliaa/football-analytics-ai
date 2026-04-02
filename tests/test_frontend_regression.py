@@ -38,6 +38,10 @@ class FakeUploadedFile:
         return self._payload
 
 
+class StopExecution(Exception):
+    pass
+
+
 class FakeProgress:
     def __init__(self, recorder):
         self.recorder = recorder
@@ -154,6 +158,9 @@ class StreamlitRecorder:
     def header(self, text):
         self.headers.append(str(text))
 
+    def title(self, text):
+        self.headers.append(str(text))
+
     def subheader(self, text):
         self.subheaders.append(str(text))
 
@@ -201,6 +208,9 @@ class StreamlitRecorder:
     def rerun(self):
         return None
 
+    def stop(self):
+        raise StopExecution()
+
     def divider(self):
         return None
 
@@ -245,6 +255,7 @@ def make_streamlit_module(config):
     module.markdown = recorder.markdown
     module.caption = recorder.caption
     module.header = recorder.header
+    module.title = recorder.title
     module.subheader = recorder.subheader
     module.metric = recorder.metric
     module.file_uploader = recorder.file_uploader
@@ -258,6 +269,7 @@ def make_streamlit_module(config):
     module.empty = recorder.empty
     module.progress = recorder.progress
     module.rerun = recorder.rerun
+    module.stop = recorder.stop
     module.divider = recorder.divider
     module.dataframe = recorder.dataframe
     module.plotly_chart = recorder.plotly_chart
@@ -387,10 +399,21 @@ def run_app(monkeypatch, config):
     monkeypatch.setitem(sys.modules, "src.controllers.process_video", make_process_video_module())
     for module_name, module_obj in make_reportlab_modules().items():
         monkeypatch.setitem(sys.modules, module_name, module_obj)
-    for name in ["app", "src.models.load_model", "src.utils.ui.theme"]:
+    for name in [
+        "app",
+        "src.models.load_model",
+        "src.utils.ui.theme",
+        "src.verticals.home",
+        "src.verticals.vertical1",
+        "src.verticals.vertical2",
+        "src.verticals.vertical1_legacy",
+    ]:
         if name in sys.modules:
             del sys.modules[name]
-    importlib.import_module("app")
+    try:
+        importlib.import_module("app")
+    except StopExecution:
+        pass
     return recorder
 
 
@@ -504,10 +527,24 @@ def test_smoke_app_imports_without_video(monkeypatch):
     assert any("Sin video cargado" in item for item in recorder.markdowns)
 
 
+def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
+    assert "Football Analytics AI" in recorder.headers
+    assert recorder.sidebar_subheaders == []
+    assert recorder.file_uploaders == []
+
+
+def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "vertical2"}})
+    assert "Vertical 2 — Data Analytics" in recorder.headers
+    assert any("Próximamente" in msg for msg in recorder.info_messages)
+    assert recorder.sidebar_subheaders == []
+
+
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
     uploaded = FakeUploadedFile("demo.mp4", b"video")
     recorder = run_app(monkeypatch, {"uploaded_video": uploaded, "session_state": {}})
-    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Guía", "Posesión"]
+    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"]
 
 
 def test_regression_video_loaded_not_processed_shows_safe_state(monkeypatch):
@@ -534,7 +571,7 @@ def test_regression_processed_with_stats_renders_core_views(monkeypatch):
     )
     assert "Exportar datos" in recorder.subheaders
     assert "Scouting" in recorder.subheaders
-    assert "Guía de interpretación" in recorder.subheaders
+    assert "Interpretación" in recorder.subheaders
     assert "Posesión de pelota" in recorder.subheaders
     assert recorder.plotly_calls >= 2
     assert recorder.dataframe_calls >= 2
