@@ -49,13 +49,13 @@ REFEREE_PANTS_DARK_VAL_MAX = 90.0
 REFEREE_PANTS_DARK_SAT_MAX = 120.0
 WATERMARK_EXCLUDE_X_MIN_RATIO = 0.85
 WATERMARK_EXCLUDE_Y_MIN_RATIO = 0.80
-RIVER_DISPLAY_NAME = "River"
-TIGRE_DISPLAY_NAME = "Tigre"
-RIVER_COLOR_HEX = "#E8EDF2"
-TIGRE_COLOR_HEX = "#00D9FF"
+TEAM1_DISPLAY_NAME = "Team 1"
+TEAM2_DISPLAY_NAME = "Team 2"
+TEAM1_COLOR_HEX = "#E8EDF2"
+TEAM2_COLOR_HEX = "#00D9FF"
 REFEREE_COLOR_HEX = "#FF8C00"
-RIVER_COLOR_BGR = (242, 237, 232)
-TIGRE_COLOR_BGR = (255, 217, 0)
+TEAM1_COLOR_BGR = (242, 237, 232)
+TEAM2_COLOR_BGR = (255, 217, 0)
 
 def convert_to_native_types(obj):
     """
@@ -922,20 +922,20 @@ def process_video(
             homography_manager.max_inertia_frames = 0
 
     # Mejora J: Anotadores estilo broadcast (elipse + trace)
-    team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(RIVER_COLOR_HEX), thickness=2)
-    team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(RIVER_COLOR_HEX), thickness=1, trace_length=30)
+    team1_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(TEAM1_COLOR_HEX), thickness=2)
+    team1_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(TEAM1_COLOR_HEX), thickness=1, trace_length=30)
     team1_label_annotator = sv.LabelAnnotator(
-        color=sv.Color.from_hex(RIVER_COLOR_HEX),
+        color=sv.Color.from_hex(TEAM1_COLOR_HEX),
         text_scale=0.5,
         text_thickness=1,
         text_color=sv.Color.BLACK,
         text_padding=3
     )
 
-    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(TIGRE_COLOR_HEX), thickness=2)
-    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(TIGRE_COLOR_HEX), thickness=1, trace_length=30)
+    team2_annotator = sv.EllipseAnnotator(color=sv.Color.from_hex(TEAM2_COLOR_HEX), thickness=2)
+    team2_trace_annotator = sv.TraceAnnotator(color=sv.Color.from_hex(TEAM2_COLOR_HEX), thickness=1, trace_length=30)
     team2_label_annotator = sv.LabelAnnotator(
-        color=sv.Color.from_hex(TIGRE_COLOR_HEX),
+        color=sv.Color.from_hex(TEAM2_COLOR_HEX),
         text_scale=0.5,
         text_thickness=1,
         text_color=sv.Color.BLACK,
@@ -1361,14 +1361,14 @@ def process_video(
                 t1_dets = tracked_persons[np.array(team1_mask)]
                 annotated_frame = team1_annotator.annotate(scene=annotated_frame, detections=t1_dets)
                 if t1_dets.tracker_id is not None:
-                    labels = [f"{RIVER_DISPLAY_NAME} #{tid}" for tid in t1_dets.tracker_id]
+                    labels = [f"{TEAM1_DISPLAY_NAME} #{tid}" for tid in t1_dets.tracker_id]
                     annotated_frame = team1_label_annotator.annotate(scene=annotated_frame, detections=t1_dets, labels=labels)
 
             if any(team2_mask):
                 t2_dets = tracked_persons[np.array(team2_mask)]
                 annotated_frame = team2_annotator.annotate(scene=annotated_frame, detections=t2_dets)
                 if t2_dets.tracker_id is not None:
-                    labels = [f"{TIGRE_DISPLAY_NAME} #{tid}" for tid in t2_dets.tracker_id]
+                    labels = [f"{TEAM2_DISPLAY_NAME} #{tid}" for tid in t2_dets.tracker_id]
                     annotated_frame = team2_label_annotator.annotate(scene=annotated_frame, detections=t2_dets, labels=labels)
 
             if any(goalkeeper_mask):
@@ -1939,12 +1939,12 @@ def process_video(
                             return x, y
                         if team1_centroid is not None:
                             cx, cy = radar_px(team1_centroid[0], team1_centroid[1])
-                            cv2.circle(radar_view, (cx, cy), 10, RIVER_COLOR_BGR, -1)
+                            cv2.circle(radar_view, (cx, cy), 10, TEAM1_COLOR_BGR, -1)
                             cv2.putText(radar_view, f"T1 ({team1_centroid[0]:.1f},{team1_centroid[1]:.1f})", (cx + 8, cy - 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
                         if team2_centroid is not None:
                             cx, cy = radar_px(team2_centroid[0], team2_centroid[1])
-                            cv2.circle(radar_view, (cx, cy), 10, TIGRE_COLOR_BGR, -1)
+                            cv2.circle(radar_view, (cx, cy), 10, TEAM2_COLOR_BGR, -1)
                             cv2.putText(radar_view, f"T2 ({team2_centroid[0]:.1f},{team2_centroid[1]:.1f})", (cx + 8, cy - 8),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
