@@ -303,8 +303,8 @@ def draw_radar_view(
     oy = int(config.margins * scale)
 
     colors = {
-        'team1': (242, 237, 232),
-        'team2': (255, 217, 0),
+        'team1': (0, 255, 0),
+        'team2': (255, 191, 0),
         'ball': (0, 0, 255),      # Red
         'referee': (0, 140, 255),
         'goalkeeper': (182, 89, 155) # Purple
