@@ -507,7 +507,7 @@ def test_smoke_app_imports_without_video(monkeypatch):
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
     uploaded = FakeUploadedFile("demo.mp4", b"video")
     recorder = run_app(monkeypatch, {"uploaded_video": uploaded, "session_state": {}})
-    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"]
+    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Guía", "Posesión"]
 
 
 def test_regression_video_loaded_not_processed_shows_safe_state(monkeypatch):
@@ -534,10 +534,36 @@ def test_regression_processed_with_stats_renders_core_views(monkeypatch):
     )
     assert "Exportar datos" in recorder.subheaders
     assert "Scouting" in recorder.subheaders
-    assert "Interpretación" in recorder.subheaders
+    assert "Guía de interpretación" in recorder.subheaders
     assert "Posesión de pelota" in recorder.subheaders
     assert recorder.plotly_calls >= 2
     assert recorder.dataframe_calls >= 2
+
+
+def test_regression_passes_section_visible_when_available(monkeypatch):
+    uploaded = FakeUploadedFile("demo.mp4", b"video")
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"stats": build_full_stats(), "video_processed": True},
+        },
+    )
+    assert "Pases y Pérdidas" in recorder.subheaders
+
+
+def test_regression_passes_section_hidden_when_empty(monkeypatch):
+    uploaded = FakeUploadedFile("demo.mp4", b"video")
+    stats = build_full_stats()
+    stats["possession"]["passes"] = {"total": 0, "team1_passes": 0, "team2_passes": 0, "turnovers": 0}
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"stats": stats, "video_processed": True},
+        },
+    )
+    assert "Pases y Pérdidas" not in recorder.subheaders
 
 
 def test_regression_partial_stats_do_not_break_render(monkeypatch):

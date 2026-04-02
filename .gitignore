@@ -37,9 +37,5 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
-
-__pycache__/
-*.pyc
-
 # Ignorar todos los videos (recomendado para no renegar a futuro)
 *.mp4

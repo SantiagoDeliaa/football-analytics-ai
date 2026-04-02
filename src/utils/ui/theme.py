@@ -47,42 +47,53 @@ def apply_premium_theme() -> None:
             color: var(--text-0);
             letter-spacing: 0.01em;
         }
+        [data-testid="stSidebar"] input[type="radio"] {
+            accent-color: var(--accent) !important;
+        }
         [data-testid="stHeader"] {
             background: rgba(0, 0, 0, 0);
-        }
-        div[data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
         }
         .st-emotion-cache-1r6slb0,
         .st-emotion-cache-z5fcl4 {
             padding-top: 1.35rem;
         }
-        .platform-header {
-            padding: 1.05rem 1.15rem 1rem 1.15rem;
-            border-radius: var(--radius-lg);
-            background: linear-gradient(120deg, #151b25 0%, #0f131a 100%);
+        button[data-testid="stSidebarCollapsedControl"] {
+            display: inline-flex !important;
+            align-items: center;
+            justify-content: center;
             border: 1px solid var(--border);
-            margin-bottom: var(--space-lg);
+            border-radius: 10px;
+            background: rgba(18, 24, 33, 0.85);
+        }
+        button[data-testid="stSidebarCollapsedControl"]:hover {
+            border-color: #54719b;
+            background: rgba(32, 44, 61, 0.9);
+        }
+        .platform-header {
+            padding: 1.15rem 1.35rem 1.1rem 1.35rem;
+            border-radius: var(--radius-lg);
+            background: linear-gradient(115deg, #111a28 0%, #0f131a 55%, #162236 100%);
+            border: 1px solid var(--border);
+            margin-bottom: 1.05rem;
+            box-shadow: 0 12px 34px rgba(0, 0, 0, 0.36);
         }
         .platform-kicker {
-            color: var(--accent-2);
+            color: #7fb4ff;
             text-transform: uppercase;
-            font-size: 0.73rem;
-            letter-spacing: 0.08em;
-            font-weight: 600;
-            margin-bottom: var(--space-sm);
+            font-size: 0.67rem;
+            letter-spacing: 0.12em;
+            font-weight: 650;
+            margin-bottom: 0.42rem;
         }
         .platform-title {
-            font-size: 1.75rem;
-            font-weight: 650;
-            line-height: 1.25;
+            font-size: 2.25rem;
+            font-weight: 750;
+            line-height: 1.12;
             color: var(--text-0);
-            margin-bottom: 0.45rem;
+            margin-bottom: 0;
         }
         .platform-subtitle {
-            font-size: 0.97rem;
+            font-size: 0.95rem;
             color: var(--text-1);
             margin-bottom: 0;
         }
@@ -91,7 +102,7 @@ def apply_premium_theme() -> None:
             letter-spacing: 0.04em;
             text-transform: uppercase;
             color: var(--text-2);
-            margin: 0.5rem 0 0.55rem 0;
+            margin: 0.45rem 0 0.5rem 0;
             font-weight: 600;
         }
         .status-card {
@@ -115,11 +126,12 @@ def apply_premium_theme() -> None:
         }
         div[data-testid="stTabs"] button {
             border-radius: 12px;
-            padding: 0.55rem 0.8rem;
+            padding: 0.62rem 0.95rem;
             background: rgba(20, 25, 34, 0.65);
             border: 1px solid var(--border);
             color: var(--text-1);
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 0.93rem;
         }
         div[data-testid="stTabs"] button[aria-selected="true"] {
             background: linear-gradient(180deg, #1b2432 0%, #141b25 100%);
@@ -168,6 +180,28 @@ def apply_premium_theme() -> None:
             color: var(--text-0) !important;
             border-radius: 10px !important;
         }
+        [data-testid="stFileUploaderDropzone"] {
+            min-height: 88px;
+        }
+        [data-testid="stFileUploaderDropzone"] [data-testid="stMarkdownContainer"] p {
+            color: #c6d3e8 !important;
+        }
+        [data-testid="stFileUploaderDropzone"] small {
+            color: #8fa5c3 !important;
+        }
+        [data-testid="stFileUploader"] button {
+            border-radius: 10px !important;
+            border: 1px solid #3c5578 !important;
+            background: linear-gradient(180deg, #3f5f8b 0%, #2c4568 100%) !important;
+            color: #f4f8ff !important;
+            font-weight: 650 !important;
+            padding: 0.4rem 0.95rem !important;
+        }
+        [data-testid="stFileUploader"] button:hover {
+            border-color: #5f82b4 !important;
+            background: linear-gradient(180deg, #4a6f9f 0%, #35537a 100%) !important;
+            color: #ffffff !important;
+        }
         [data-testid="stExpander"] {
             border: 1px solid var(--border);
             border-radius: var(--radius-md);
@@ -175,6 +209,29 @@ def apply_premium_theme() -> None:
         }
         hr {
             border-color: rgba(120, 137, 164, 0.28) !important;
+        }
+        .platform-footer {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 0.85rem 1rem;
+            background: linear-gradient(180deg, rgba(17, 22, 31, 0.75) 0%, rgba(12, 16, 23, 0.9) 100%);
+            color: var(--text-1);
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        .platform-footer strong {
+            color: var(--text-0);
+            font-weight: 650;
+        }
+        .platform-footer .footer-pill {
+            border: 1px solid rgba(127, 180, 255, 0.3);
+            border-radius: 999px;
+            padding: 0.2rem 0.62rem;
+            font-size: 0.78rem;
+            color: #cfe3ff;
+            background: rgba(33, 56, 86, 0.35);
         }
         </style>
         """,
@@ -186,9 +243,8 @@ def render_app_header() -> None:
     st.markdown(
         """
         <div class="platform-header">
-            <div class="platform-kicker">Football Tactical Intelligence</div>
-            <div class="platform-title">Soccer Analytics Platform</div>
-            <p class="platform-subtitle">Análisis táctico integral con tracking, métricas colectivas, scouting y exportes operativos.</p>
+            <div class="platform-kicker">AI-Driven Match Intelligence Suite</div>
+            <div class="platform-title">Football Tactical Intelligence Platform</div>
         </div>
         """,
         unsafe_allow_html=True,
