@@ -624,6 +624,8 @@ def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
             "El equipo tuvo poca presencia en campo rival.",
         ]
     )
+    assert recorder.tabs_labels == ["Attack", "Defense", "Transitions"]
+    assert recorder.plotly_calls == 3
     assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
     assert any('"match_info"' in item for item in recorder.markdowns)
     assert any('"proprietary_metrics"' in item for item in recorder.markdowns)
@@ -768,6 +770,21 @@ def test_proprietary_metric_presentation_returns_spanish_copy_and_color():
     assert presentation["level"] == "Alto"
     assert presentation["color"] == "#22c55e"
     assert presentation["interpretation"] == "El equipo dominó territorialmente el partido."
+
+
+def test_pitch_view_builder_returns_figure_and_metadata():
+    from src.utils.ui.pitch_views import build_pitch_view_figure
+
+    normalized = {
+        "attack": {"signals": {"crosses": 2, "box entries": 2, "final third": 3, "shots": 1, "xg": 1}},
+        "defense": {"signals": {"duels": 4, "pressing": 2, "recoveries": 1}},
+        "transitions": {"signals": {"turnover": 2, "regain": 3, "counter": 1, "direct attack": 1, "transition": 2}},
+    }
+    view = build_pitch_view_figure("Transitions", normalized)
+    assert view["title"] == "Transitions View"
+    assert isinstance(view["subtitle"], str) and view["subtitle"]
+    assert view["figure"] is not None
+    assert isinstance(view["has_signal"], bool)
 
 
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):

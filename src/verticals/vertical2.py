@@ -5,6 +5,7 @@ from src.services.event_normalizer import normalize_event_data
 from src.services.pdf_ingestion import ingest_pdf
 from src.services.proprietary_metrics import calculate_proprietary_metrics
 from src.services.proprietary_metrics import get_metric_presentation
+from src.utils.ui.pitch_views import build_pitch_view_figure
 
 
 def render_vertical2() -> None:
@@ -57,6 +58,33 @@ def render_vertical2() -> None:
                 unsafe_allow_html=True,
             )
             st.caption(presentation.get("interpretation", "Interpretación no disponible."))
+
+    st.subheader("Cancha Principal")
+    attack_tab, defense_tab, transitions_tab = st.tabs(["Attack", "Defense", "Transitions"])
+
+    with attack_tab:
+        attack_view = build_pitch_view_figure("Attack", normalized_payload)
+        st.markdown(f"**{attack_view.get('title', 'Attack View')}**")
+        st.caption(attack_view.get("subtitle", "Vista ofensiva del comportamiento del equipo."))
+        if not attack_view.get("has_signal", True):
+            st.info("Datos ofensivos limitados en este reporte. Mostramos una vista base de referencia.")
+        st.plotly_chart(attack_view.get("figure"), use_container_width=True)
+
+    with defense_tab:
+        defense_view = build_pitch_view_figure("Defense", normalized_payload)
+        st.markdown(f"**{defense_view.get('title', 'Defense View')}**")
+        st.caption(defense_view.get("subtitle", "Vista defensiva del comportamiento del equipo."))
+        if not defense_view.get("has_signal", True):
+            st.info("Datos defensivos limitados en este reporte. Mostramos una vista base de referencia.")
+        st.plotly_chart(defense_view.get("figure"), use_container_width=True)
+
+    with transitions_tab:
+        transitions_view = build_pitch_view_figure("Transitions", normalized_payload)
+        st.markdown(f"**{transitions_view.get('title', 'Transitions View')}**")
+        st.caption(transitions_view.get("subtitle", "Vista de transiciones del comportamiento del equipo."))
+        if not transitions_view.get("has_signal", True):
+            st.info("Datos de transición limitados en este reporte. Mostramos una vista base de referencia.")
+        st.plotly_chart(transitions_view.get("figure"), use_container_width=True)
 
     preview = {
         "status": normalized_payload.get("status", "warning"),
