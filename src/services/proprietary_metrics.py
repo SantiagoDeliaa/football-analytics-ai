@@ -16,6 +16,58 @@ def _category(score: int) -> str:
     return "High"
 
 
+def _level_visuals(category: str) -> tuple[str, str]:
+    if category == "High":
+        return "Alto", "#22c55e"
+    if category == "Low":
+        return "Bajo", "#ef4444"
+    return "Medio", "#f59e0b"
+
+
+def _presentation_copy(metric_key: str, category: str) -> tuple[str, str, str]:
+    metric_copy = {
+        "field_tilt_index": {
+            "label": "Control del Juego",
+            "subtitle": "Nivel de dominio territorial y presencia en campo rival.",
+            "interpretation": {
+                "High": "El equipo dominó territorialmente el partido.",
+                "Medium": "El equipo tuvo control parcial del territorio.",
+                "Low": "El equipo tuvo poca presencia en campo rival.",
+            },
+        },
+        "directness_index": {
+            "label": "Velocidad de Ataque",
+            "subtitle": "Ritmo y verticalidad para progresar hacia el arco rival.",
+            "interpretation": {
+                "High": "El equipo progresó de forma directa hacia el arco rival.",
+                "Medium": "El equipo avanzó con un ritmo moderado.",
+                "Low": "El equipo tuvo un juego lento y poco vertical.",
+            },
+        },
+        "pressing_efficiency": {
+            "label": "Impacto del Pressing",
+            "subtitle": "Capacidad de generar peligro tras recuperar alto.",
+            "interpretation": {
+                "High": "El equipo generó peligro tras recuperar alto.",
+                "Medium": "El equipo recuperó alto pero con impacto moderado.",
+                "Low": "El equipo recuperó alto pero generó poco peligro.",
+            },
+        },
+        "risk_exposure_score": {
+            "label": "Riesgo en Salida",
+            "subtitle": "Seguridad del equipo al salir jugando desde atrás.",
+            "interpretation": {
+                "High": "El equipo asumió muchos riesgos en salida y perdió balones peligrosos.",
+                "Medium": "El equipo tuvo algunos problemas en salida.",
+                "Low": "El equipo fue sólido en salida y evitó pérdidas peligrosas.",
+            },
+        },
+    }
+    selected = metric_copy.get(metric_key, metric_copy["field_tilt_index"])
+    interpretation_map = selected["interpretation"]
+    return selected["label"], selected["subtitle"], interpretation_map.get(category, interpretation_map["Medium"])
+
+
 def _get_signal(normalized_payload: dict[str, Any], section: str, key: str) -> float:
     section_data = normalized_payload.get(section, {})
     signals = section_data.get("signals", {})
@@ -128,3 +180,16 @@ def calculate_proprietary_metrics(
         },
     }
     return metrics
+
+
+def get_metric_presentation(metric_key: str, metric_data: dict[str, Any]) -> dict[str, Any]:
+    category = str(metric_data.get("category", "Medium"))
+    label, subtitle, interpretation = _presentation_copy(metric_key, category)
+    level_es, color = _level_visuals(category)
+    return {
+        "label": label,
+        "subtitle": subtitle,
+        "interpretation": interpretation,
+        "level": level_es,
+        "color": color,
+    }

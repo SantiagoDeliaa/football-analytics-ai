@@ -609,11 +609,21 @@ def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
     assert any("Archivo:** wyscout_report.pdf" in item for item in recorder.markdowns)
     metric_labels = [label for label, _ in recorder.metrics]
     assert metric_labels == [
-        "Territorial Control",
-        "Verticality",
-        "High Press Impact",
-        "Build-Up Risk",
+        "Control del Juego",
+        "Velocidad de Ataque",
+        "Impacto del Pressing",
+        "Riesgo en Salida",
     ]
+    assert any(level in item for item in recorder.markdowns for level in ["Nivel: Alto", "Nivel: Medio", "Nivel: Bajo"])
+    assert any(
+        interpretation in item
+        for item in recorder.captions
+        for interpretation in [
+            "El equipo dominó territorialmente el partido.",
+            "El equipo tuvo control parcial del territorio.",
+            "El equipo tuvo poca presencia en campo rival.",
+        ]
+    )
     assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
     assert any('"match_info"' in item for item in recorder.markdowns)
     assert any('"proprietary_metrics"' in item for item in recorder.markdowns)
@@ -748,6 +758,16 @@ def test_proprietary_metrics_returns_four_scores_in_valid_range():
         assert metric["label"]
         assert metric["description"]
         assert metric["category"] in {"Low", "Medium", "High"}
+
+
+def test_proprietary_metric_presentation_returns_spanish_copy_and_color():
+    from src.services.proprietary_metrics import get_metric_presentation
+
+    presentation = get_metric_presentation("field_tilt_index", {"category": "High"})
+    assert presentation["label"] == "Control del Juego"
+    assert presentation["level"] == "Alto"
+    assert presentation["color"] == "#22c55e"
+    assert presentation["interpretation"] == "El equipo dominó territorialmente el partido."
 
 
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):

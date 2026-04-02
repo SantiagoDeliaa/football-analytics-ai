@@ -4,6 +4,7 @@ import json
 from src.services.event_normalizer import normalize_event_data
 from src.services.pdf_ingestion import ingest_pdf
 from src.services.proprietary_metrics import calculate_proprietary_metrics
+from src.services.proprietary_metrics import get_metric_presentation
 
 
 def render_vertical2() -> None:
@@ -47,10 +48,15 @@ def render_vertical2() -> None:
     metric_columns = st.columns(4)
     for idx, metric_key in enumerate(metric_order):
         metric_data = proprietary_metrics.get(metric_key, {})
+        presentation = get_metric_presentation(metric_key, metric_data)
         with metric_columns[idx]:
-            st.metric(metric_data.get("label", "Metric"), f"{metric_data.get('score', 0)}")
-            st.caption(metric_data.get("description", "Métrica no disponible."))
-            st.caption(f"Nivel: {metric_data.get('category', 'Medium')}")
+            st.metric(presentation.get("label", "Métrica"), f"{metric_data.get('score', 0)}")
+            st.caption(presentation.get("subtitle", "Métrica no disponible."))
+            st.markdown(
+                f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;background:{presentation.get('color', '#f59e0b')};color:#111827;font-weight:600;'>Nivel: {presentation.get('level', 'Medio')}</span>",
+                unsafe_allow_html=True,
+            )
+            st.caption(presentation.get("interpretation", "Interpretación no disponible."))
 
     preview = {
         "status": normalized_payload.get("status", "warning"),
