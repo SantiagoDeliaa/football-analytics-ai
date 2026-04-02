@@ -245,7 +245,7 @@ class StreamlitRecorder:
     def text(self, value):
         self.markdowns.append(str(value))
 
-    def code(self, value):
+    def code(self, value, **kwargs):
         self.markdowns.append(str(value))
 
 
@@ -533,7 +533,8 @@ def test_smoke_app_imports_without_video(monkeypatch):
 
 def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
     recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
-    assert any("Tactical Intelligence" in item for item in recorder.markdowns)
+    assert any("tip-title" in item for item in recorder.markdowns)
+    assert any("tip-inline-tip" in item for item in recorder.markdowns)
     assert any("TIP" in item for item in recorder.markdowns)
     assert not any("Selecciona una vertical para continuar" in item for item in recorder.markdowns)
     assert recorder.sidebar_subheaders == []
@@ -543,7 +544,8 @@ def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
 def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "vertical2"}})
     assert "Vertical 2 — Data Analytics" in recorder.headers
-    assert any("Próximamente" in msg for msg in recorder.info_messages)
+    assert any("Sube un reporte PDF" in msg for msg in recorder.info_messages)
+    assert "Subir reporte Wyscout (.pdf)" in recorder.file_uploaders
     assert recorder.sidebar_subheaders == []
 
 
@@ -572,6 +574,41 @@ def test_home_click_navigates_to_data_analytics(monkeypatch):
         },
     )
     assert recorder.session_state.active_vertical == "vertical2"
+
+
+def test_home_branding_renders_inline_tip_and_highlighted_initials(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
+    assert any(
+        '<h1 class="tip-title"><span class="tip-accent">T</span>actical <span class="tip-accent">I</span>ntelligence <span class="tip-accent">P</span>latform <span class="tip-inline-tip">(<span class="tip-accent">TIP</span>)</span></h1>'
+        in item
+        for item in recorder.markdowns
+    )
+
+
+def test_vertical2_back_to_home_sets_route(monkeypatch):
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "vertical2"},
+            "button": {"Volver a Home": True},
+        },
+    )
+    assert recorder.session_state.active_vertical == "home"
+
+
+def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
+    uploaded = FakeUploadedFile("wyscout_report.pdf", b"dummy bytes")
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"active_vertical": "vertical2"},
+        },
+    )
+    assert any("Archivo:** wyscout_report.pdf" in item for item in recorder.markdowns)
+    assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
+    assert any('"match_info"' in item for item in recorder.markdowns)
 
 
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
@@ -653,6 +690,30 @@ def test_regression_partial_stats_do_not_break_render(monkeypatch):
     )
     assert "Análisis táctico" in recorder.subheaders
     assert not any("Traceback" in item for item in recorder.markdowns)
+
+
+def test_event_normalizer_returns_stable_schema_keys_on_fallback():
+    from src.services.event_normalizer import normalize_event_data
+
+    normalized = normalize_event_data(
+        {
+            "status": "warning",
+            "file_name": "empty_report.pdf",
+            "page_count": 0,
+            "raw_text": "",
+        }
+    )
+    assert set(normalized.keys()) >= {
+        "match_info",
+        "team_summary",
+        "formations",
+        "attack",
+        "defense",
+        "transitions",
+        "build_up",
+        "finishing",
+    }
+    assert normalized["status"] == "warning"
 
 
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):
