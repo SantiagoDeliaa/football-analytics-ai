@@ -544,7 +544,7 @@ def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
 def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "vertical2"}})
     assert "Vertical 2 — Data Analytics" in recorder.headers
-    assert any("Sube un reporte PDF" in msg for msg in recorder.info_messages)
+    assert any("Sube un PDF Wyscout" in msg for msg in recorder.info_messages)
     assert "Subir reporte Wyscout (.pdf)" in recorder.file_uploaders
     assert recorder.sidebar_subheaders == []
 
@@ -624,8 +624,10 @@ def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
             "El equipo tuvo poca presencia en campo rival.",
         ]
     )
+    assert "Radar Táctico" in recorder.subheaders
+    assert "Insights del Partido" in recorder.subheaders
     assert recorder.tabs_labels == ["Attack", "Defense", "Transitions"]
-    assert recorder.plotly_calls == 3
+    assert recorder.plotly_calls == 4
     assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
     assert any('"match_info"' in item for item in recorder.markdowns)
     assert any('"proprietary_metrics"' in item for item in recorder.markdowns)
@@ -785,6 +787,25 @@ def test_pitch_view_builder_returns_figure_and_metadata():
     assert isinstance(view["subtitle"], str) and view["subtitle"]
     assert view["figure"] is not None
     assert isinstance(view["has_signal"], bool)
+
+
+def test_insight_generator_returns_readable_insights():
+    from src.services.insight_generator import generate_match_insights
+
+    normalized = {
+        "attack": {"signals": {"final third": 3, "crosses": 1, "box entries": 2, "shots": 2}},
+        "defense": {"signals": {"recoveries": 2}},
+        "transitions": {"signals": {"regain": 2, "turnover": 1}},
+    }
+    metrics = {
+        "field_tilt_index": {"score": 78},
+        "directness_index": {"score": 64},
+        "pressing_efficiency": {"score": 71},
+        "risk_exposure_score": {"score": 32},
+    }
+    insights = generate_match_insights(normalized, metrics)
+    assert 3 <= len(insights) <= 5
+    assert all(isinstance(item, str) and item for item in insights)
 
 
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):

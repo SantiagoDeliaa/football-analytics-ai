@@ -1,4 +1,5 @@
 from .event_normalizer import normalize_event_data
 from .pdf_ingestion import ingest_pdf
+from .insight_generator import generate_match_insights
 from .proprietary_metrics import calculate_proprietary_metrics
 from .proprietary_metrics import get_metric_presentation
