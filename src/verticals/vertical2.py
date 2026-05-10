@@ -9,6 +9,7 @@ from src.services.proprietary_metrics import calculate_proprietary_metrics
 from src.services.proprietary_metrics import get_metric_presentation
 from src.utils.ui.pitch_views import build_pitch_view_figure
 from src.utils.ui.theme import apply_plotly_dark_theme
+from src.verticals.vertical2_api_event import render_vertical2_api_event
 
 
 def _build_tactical_radar(
@@ -68,10 +69,10 @@ def _build_tactical_radar(
 
 def render_vertical2_pdf() -> None:
     st.subheader("Carga de Reporte")
-    uploaded_pdf = st.file_uploader("Subir reporte (.pdf)", type=["pdf"], key="vertical2_pdf_uploader")
+    uploaded_pdf = st.file_uploader("Subir reporte Wyscout (.pdf)", type=["pdf"], key="vertical2_pdf_uploader")
 
     if uploaded_pdf is None:
-        st.info("Sube un PDF para generar métricas, cancha táctica e insights automáticos.")
+        st.info("Sube un PDF Wyscout para generar métricas, cancha táctica e insights automáticos.")
         return
 
     with st.spinner("Procesando reporte PDF..."):
@@ -164,23 +165,6 @@ def render_vertical2_pdf() -> None:
 
     st.subheader("Preview del schema normalizado")
     st.code(json.dumps(preview, indent=2, ensure_ascii=False), language="json")
-
-
-def render_vertical2_api_event() -> None:
-    st.subheader("Datos por API")
-    st.caption("Conectá event data desde proveedores externos para generar métricas tácticas propietarias.")
-
-    provider = st.selectbox(
-        "Proveedor de datos",
-        ["StatsBomb Open Data", "API-Football (próximamente)"],
-        key="vertical2_api_provider",
-    )
-
-    if provider == "API-Football (próximamente)":
-        st.info("API-Football estará disponible próximamente.")
-        return
-
-    st.info("Próximo paso: cargar competiciones, partidos y eventos desde open data.")
 
 
 def render_vertical2() -> None:
