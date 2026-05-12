@@ -42,17 +42,26 @@ def _hover_text(event: dict[str, Any]) -> str:
 def create_pitch_figure(title: str | None = None) -> go.Figure:
     fig = go.Figure()
     # Marco del campo
-    fig.add_shape(type="rect", x0=0, y0=0, x1=120, y1=80, line=dict(color="#e5e7eb", width=2), fillcolor="#14532d")
-    fig.add_shape(type="line", x0=60, y0=0, x1=60, y1=80, line=dict(color="#e5e7eb", width=2))
-    fig.add_shape(type="circle", x0=50, y0=30, x1=70, y1=50, line=dict(color="#e5e7eb", width=2))
+    fig.add_shape(
+        type="rect",
+        x0=0,
+        y0=0,
+        x1=120,
+        y1=80,
+        line=dict(color="#e5e7eb", width=2),
+        fillcolor="#14532d",
+        layer="below",
+    )
+    fig.add_shape(type="line", x0=60, y0=0, x1=60, y1=80, line=dict(color="#e5e7eb", width=2), layer="below")
+    fig.add_shape(type="circle", x0=50, y0=30, x1=70, y1=50, line=dict(color="#e5e7eb", width=2), layer="below")
     # Áreas y arcos
-    fig.add_shape(type="rect", x0=0, y0=18, x1=18, y1=62, line=dict(color="#e5e7eb", width=2))
-    fig.add_shape(type="rect", x0=102, y0=18, x1=120, y1=62, line=dict(color="#e5e7eb", width=2))
-    fig.add_shape(type="rect", x0=0, y0=30, x1=6, y1=50, line=dict(color="#e5e7eb", width=2))
-    fig.add_shape(type="rect", x0=114, y0=30, x1=120, y1=50, line=dict(color="#e5e7eb", width=2))
+    fig.add_shape(type="rect", x0=0, y0=18, x1=18, y1=62, line=dict(color="#e5e7eb", width=2), layer="below")
+    fig.add_shape(type="rect", x0=102, y0=18, x1=120, y1=62, line=dict(color="#e5e7eb", width=2), layer="below")
+    fig.add_shape(type="rect", x0=0, y0=30, x1=6, y1=50, line=dict(color="#e5e7eb", width=2), layer="below")
+    fig.add_shape(type="rect", x0=114, y0=30, x1=120, y1=50, line=dict(color="#e5e7eb", width=2), layer="below")
     # Arcos simples fuera de línea
-    fig.add_shape(type="line", x0=-1.2, y0=36, x1=-1.2, y1=44, line=dict(color="#e5e7eb", width=3))
-    fig.add_shape(type="line", x0=121.2, y0=36, x1=121.2, y1=44, line=dict(color="#e5e7eb", width=3))
+    fig.add_shape(type="line", x0=-1.2, y0=36, x1=-1.2, y1=44, line=dict(color="#e5e7eb", width=3), layer="below")
+    fig.add_shape(type="line", x0=121.2, y0=36, x1=121.2, y1=44, line=dict(color="#e5e7eb", width=3), layer="below")
     # Flecha de orientación
     fig.add_annotation(x=110, y=76, text="Ataque ->", showarrow=False, font=dict(color="#f8fafc", size=12))
 

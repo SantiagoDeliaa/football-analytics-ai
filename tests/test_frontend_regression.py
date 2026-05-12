@@ -410,6 +410,7 @@ def run_app(monkeypatch, config):
         "src.verticals.home",
         "src.verticals.vertical1",
         "src.verticals.vertical2",
+        "src.verticals.vertical2_api_event",
         "src.verticals.vertical1_legacy",
     ]:
         if name in sys.modules:
@@ -546,6 +547,8 @@ def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     assert "Vertical 2 — Data Analytics" in recorder.headers
     assert any("Sube un PDF Wyscout" in msg for msg in recorder.info_messages)
     assert "Subir reporte Wyscout (.pdf)" in recorder.file_uploaders
+    assert recorder.tabs_labels == ["Subir PDF", "API Event Data"]
+    assert "API Event Data" in recorder.subheaders
     assert recorder.sidebar_subheaders == []
 
 
@@ -820,6 +823,62 @@ def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):
     assert fig.layout.template is not None
     assert fig.layout.paper_bgcolor == "#0f131a"
     assert fig.layout.plot_bgcolor == "#141b24"
+
+
+def test_open_event_visualizations_render_visible_traces_and_keep_pitch_below():
+    from src.services.open_event_visualizations import create_event_map
+    from src.services.open_event_visualizations import create_progressive_actions_map
+
+    canonical_events = [
+        {
+            "event_id": "1",
+            "match_id": "m1",
+            "team_id": "t1",
+            "team_name": "Argentina",
+            "player_id": "p1",
+            "player_name": "Lionel Messi",
+            "minute": 12,
+            "second": 8,
+            "event_type": "Pass",
+            "x": 42.0,
+            "y": 30.0,
+            "end_x": 65.0,
+            "end_y": 34.0,
+            "outcome": "Complete",
+            "progressive": True,
+            "under_pressure": False,
+            "xG": 0.0,
+            "xA": 0.0,
+        },
+        {
+            "event_id": "2",
+            "match_id": "m1",
+            "team_id": "t1",
+            "team_name": "Argentina",
+            "player_id": "p2",
+            "player_name": "Julian Alvarez",
+            "minute": 25,
+            "second": 14,
+            "event_type": "Shot",
+            "x": 102.0,
+            "y": 36.0,
+            "end_x": None,
+            "end_y": None,
+            "outcome": "Goal",
+            "progressive": False,
+            "under_pressure": True,
+            "xG": 0.34,
+            "xA": 0.0,
+        },
+    ]
+
+    event_map = create_event_map(canonical_events, selected_team="Argentina")
+    assert len(event_map.data) >= 2
+    assert all(getattr(shape, "layer", None) == "below" for shape in event_map.layout.shapes)
+
+    progressive_map = create_progressive_actions_map(canonical_events, selected_team="Argentina")
+    assert len(progressive_map.data) >= 1
+    assert progressive_map.data[0].mode == "lines+markers"
 
 
 def test_component_build_centroid_heatmap_handles_empty_and_valid():

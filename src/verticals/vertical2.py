@@ -174,7 +174,7 @@ def render_vertical2() -> None:
         st.session_state.active_vertical = "home"
         st.rerun()
 
-    pdf_tab, api_tab = st.tabs(["Subir PDF", "Datos por API"])
+    pdf_tab, api_tab = st.tabs(["Subir PDF", "API Event Data"])
 
     with pdf_tab:
         render_vertical2_pdf()

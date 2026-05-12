@@ -131,8 +131,8 @@ def _render_proprietary_metric_card(
 
 
 def render_vertical2_api_event() -> None:
-    st.subheader("Datos por API")
-    st.caption("Conectá event data desde proveedores externos para generar métricas tácticas propietarias.")
+    st.subheader("API Event Data")
+    st.caption("Conectá datos de eventos desde proveedores externos para generar métricas tácticas propietarias.")
     try:
         initialize_event_data_db()
     except Exception as exc:
@@ -338,24 +338,24 @@ def render_vertical2_api_event() -> None:
     prop_col1, prop_col2, prop_col3 = st.columns(3)
     with prop_col1:
         _render_proprietary_metric_card(
-            title="Field Tilt",
+            title="Dominio territorial",
             value=metrics.get("field_tilt_index"),
             label=str(metrics.get("field_tilt_label", "No aplica")),
-            description="Dominio territorial del equipo en acciones del último tercio.",
+            description="Mide cuánto peso tuvo el equipo en el último tercio respecto del total del partido.",
         )
     with prop_col2:
         _render_proprietary_metric_card(
-            title="Directness",
+            title="Verticalidad",
             value=metrics.get("directness_index"),
             label=str(metrics.get("directness_label", "No aplica")),
-            description="Relación entre progresiones y volumen de pases.",
+            description="Indica qué tan directo progresa el equipo en relación con su volumen de pases.",
         )
     with prop_col3:
         _render_proprietary_metric_card(
             title="Amenaza progresiva",
             value=metrics.get("progressive_threat_index"),
             label=str(metrics.get("progressive_threat_label", "No aplica")),
-            description="Peligro combinado por progresiones, último tercio, remate y xG.",
+            description="Resume cuánto peligro genera el equipo al progresar, llegar al último tercio y rematar.",
         )
 
     prop_row2_col1, prop_row2_col2 = st.columns(2)
@@ -364,21 +364,21 @@ def render_vertical2_api_event() -> None:
             title="Altura de recuperación",
             value=metrics.get("recovery_height_index"),
             label=str(metrics.get("recovery_height_label", "No aplica")),
-            description="Promedio de altura donde se recupera el balón (x sobre 120m).",
+            description="Refleja en qué zonas del campo recupera la pelota el equipo, desde campo propio hasta campo rival.",
         )
     with prop_row2_col2:
         _render_proprietary_metric_card(
             title="Calidad de remate",
             value=metrics.get("shot_quality_index"),
             label=str(metrics.get("shot_quality_label", "No aplica")),
-            description="xG promedio por remate, expresado en escala 0-100.",
+            description="Estima la calidad promedio de las ocasiones de remate generadas por el equipo.",
         )
     if selected_player and selected_player != "Todos":
         _render_proprietary_metric_card(
             title="Influencia del jugador",
             value=metrics.get("player_influence_score"),
             label=str(metrics.get("player_influence_label", "No aplica")),
-            description="Aporte combinado del jugador en volumen, progresión, amenaza y recuperación.",
+            description="Sintetiza la participación del jugador en volumen de juego, progresión, amenaza y recuperación.",
         )
 
     st.markdown("### Visualizaciones tácticas")
