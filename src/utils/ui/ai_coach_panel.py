@@ -188,6 +188,7 @@ def render_ai_coach_panel(
     diagnosis_key = build_ai_coach_state_key("ai_coach_diagnosis", **state_scope)
     chat_key = build_ai_coach_state_key("ai_coach_chat", **state_scope)
     input_key = build_ai_coach_state_key("ai_coach_input", **state_scope)
+    clear_input_key = build_ai_coach_state_key("ai_coach_clear_input", **state_scope)
     config_status = get_ai_coach_config_status()
     is_configured = bool(config_status.get("configured"))
 
@@ -236,6 +237,8 @@ def render_ai_coach_panel(
                     st.error(error_message)
 
     st.markdown("#### Chat contextual")
+    if st.session_state.pop(clear_input_key, False):
+        st.session_state[input_key] = ""
     question_input = st.text_input(
         "Preguntale algo al AI Coach...",
         key=input_key,
@@ -254,7 +257,8 @@ def render_ai_coach_panel(
             if error_message:
                 st.error(error_message)
             else:
-                st.session_state[input_key] = ""
+                st.session_state[clear_input_key] = True
+                st.rerun()
 
     chat_history = list(st.session_state.get(chat_key, []))
     if chat_history:

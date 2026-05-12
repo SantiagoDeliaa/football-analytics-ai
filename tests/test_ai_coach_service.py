@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -264,3 +265,47 @@ def test_call_llm_can_be_mocked_without_real_requests(monkeypatch):
 
     assert result["ok"] is True
     assert "sin requests reales" in result["content"]
+
+
+def test_call_llm_returns_friendly_message_for_quota_exceeded_http_error(monkeypatch):
+    monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
+    monkeypatch.setenv("AI_COACH_API_KEY", "demo-key")
+    monkeypatch.setenv("AI_COACH_MODEL", "gemini-2.0-flash")
+    monkeypatch.setenv("AI_COACH_BASE_URL", "https://example.com/v1/chat/completions")
+
+    class _QuotaError(HTTPError):
+        def __init__(self):
+            super().__init__(
+                url="https://example.com/v1/chat/completions",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self):
+            return json.dumps(
+                {
+                    "error": {
+                        "code": 429,
+                        "message": "You exceeded your current quota. Quota exceeded for metric.",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                }
+            ).encode("utf-8")
+
+    def _raise_quota_error(request, timeout):
+        raise _QuotaError()
+
+    monkeypatch.setattr(llm_client, "urlopen", _raise_quota_error)
+
+    result = llm_client.call_llm(
+        [
+            {"role": "system", "content": "Sistema"},
+            {"role": "user", "content": "Usuario"},
+        ]
+    )
+
+    assert result["ok"] is False
+    assert "cuota disponible" in result["error"].lower()
+    assert "billing" in result["error"].lower()

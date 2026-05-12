@@ -1090,6 +1090,98 @@ def test_api_event_dashboard_can_generate_ai_coach_diagnosis_and_debug_context(m
     assert recorder.json_payloads
 
 
+def test_ai_coach_chat_uses_safe_input_clear_pattern(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Preguntar": True},
+            "text_input": {"Preguntale algo al AI Coach...": "¿Cómo estuvo el equipo?"},
+        },
+    )
+    import src.utils.ui.ai_coach_panel as ai_coach_panel
+
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "api_key_configured": True,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "answer_coach_question",
+        lambda match_context, user_question, conversation_history=None: {
+            "ok": True,
+            "answer": "Respuesta contextual de prueba.",
+            "error": "",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.1,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    chat_key = ai_coach_panel.build_ai_coach_state_key(
+        "ai_coach_chat",
+        provider=module.STORAGE_PROVIDER_STATSBOMB,
+        match_id="m1",
+        selected_team="Todos",
+        selected_player="Todos",
+    )
+    clear_key = ai_coach_panel.build_ai_coach_state_key(
+        "ai_coach_clear_input",
+        provider=module.STORAGE_PROVIDER_STATSBOMB,
+        match_id="m1",
+        selected_team="Todos",
+        selected_player="Todos",
+    )
+
+    assert recorder.session_state[chat_key][-2:] == [
+        {"role": "user", "content": "¿Cómo estuvo el equipo?"},
+        {"role": "assistant", "content": "Respuesta contextual de prueba."},
+    ]
+    assert recorder.session_state[clear_key] is True
+
+
 def test_api_event_config_debug_status_hides_secret_values(monkeypatch):
     module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
 

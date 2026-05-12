@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -91,6 +92,37 @@ def _extract_content(parsed_response: dict[str, Any]) -> str:
     return ""
 
 
+def _sanitize_provider_detail(detail: str) -> str:
+    normalized = str(detail or "").strip()
+    if not normalized:
+        return ""
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = normalized.replace("`", "")
+    return normalized
+
+
+def _friendly_ai_coach_error_message(
+    error_text: str,
+    *,
+    status_code: int | None = None,
+) -> str:
+    normalized = _sanitize_provider_detail(error_text).lower()
+
+    if status_code == 429 or "quota exceeded" in normalized or "resource_exhausted" in normalized:
+        return (
+            "El AI Coach no tiene cuota disponible en el provider configurado. "
+            "Revisá billing, plan o límites del proyecto e intentá nuevamente más tarde."
+        )
+    if status_code == 401 or "unauthorized" in normalized or "invalid api key" in normalized:
+        return "La credencial configurada para el AI Coach no es válida o no tiene permisos."
+    if status_code == 403 or "forbidden" in normalized or "permission denied" in normalized:
+        return "El provider rechazó el acceso del AI Coach. Revisá permisos, proyecto y modelo configurado."
+    if "model" in normalized and "not found" in normalized:
+        return "El modelo configurado para el AI Coach no está disponible en el provider actual."
+
+    return ""
+
+
 def is_ai_coach_configured() -> bool:
     return _get_ai_coach_api_key() is not None
 
@@ -171,10 +203,11 @@ def call_llm(
                 error_message = str(provider_error.get("message") or "El provider devolvió un error.")
             else:
                 error_message = str(provider_error)
+            friendly_message = _friendly_ai_coach_error_message(error_message)
             return {
                 "ok": False,
                 "content": "",
-                "error": f"Error del provider del AI Coach: {error_message}",
+                "error": friendly_message or f"Error del provider del AI Coach: {error_message}",
             }
 
         content = _extract_content(parsed)
@@ -196,6 +229,9 @@ def call_llm(
             detail = exc.read().decode("utf-8").strip()
         except Exception:
             detail = ""
+        friendly_message = _friendly_ai_coach_error_message(detail or str(exc), status_code=exc.code)
+        if friendly_message:
+            return {"ok": False, "content": "", "error": friendly_message}
         message = f"Error HTTP llamando al AI Coach: {exc}"
         if detail:
             message = f"{message}. Detalle: {detail}"
