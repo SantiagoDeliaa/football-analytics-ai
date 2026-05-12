@@ -24,9 +24,19 @@ Provider
 → Canonical Event Model
 → Metrics
 → Insights
+→ Match Context Builder
+→ AI Tactical Coach
 → Visualizations
 → Local Persistence
 ```
+
+## AI Tactical Coach
+- Primera capa objetivo: `src/services/ai_coach/context_builder.py`.
+- El `Match Context Builder` genera un contexto tactico estructurado, enriquecido y agnostico al provider.
+- El futuro LLM debe consumir ese contexto estructurado por defecto, no el raw provider data completo.
+- El raw data puede quedar disponible a futuro mediante retrieval controlado cuando haga falta profundizar el analisis.
+- La configuracion del AI Coach debe manejarse por entorno con `AI_COACH_API_KEY`, `AI_COACH_MODEL` y `AI_COACH_BASE_URL`.
+- Si faltan datos o el provider no tiene cierta cobertura, el AI Coach debe explicitar esas limitaciones en sus respuestas.
 
 ## Archivos principales
 - `src/verticals/vertical2.py`
@@ -37,6 +47,10 @@ Provider
 - `src/services/api_football_normalizer.py`
 - `src/services/open_event_metrics.py`
 - `src/services/open_event_insights.py`
+- `src/services/ai_coach/context_builder.py`
+- `src/services/ai_coach/llm_client.py`
+- `src/services/ai_coach/prompts.py`
+- `src/services/ai_coach/coach_service.py`
 - `src/services/open_event_visualizations.py`
 - `src/services/storage/database.py`
 - `src/services/storage/event_data_repository.py`

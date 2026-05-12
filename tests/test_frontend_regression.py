@@ -129,6 +129,9 @@ class StreamlitRecorder:
         self.progress_values = []
         self.plotly_calls = 0
         self.plotly_keys = []
+        self.text_inputs = []
+        self.json_payloads = []
+        self.expander_labels = []
         self.dataframe_calls = 0
         self.download_buttons = []
         self.sidebar_headers = []
@@ -197,6 +200,11 @@ class StreamlitRecorder:
                 return button_config[label]
         return self.config.get("button_clicked", False)
 
+    def text_input(self, label, value="", **kwargs):
+        selected = self.config.get("text_input", {}).get(label, value)
+        self.text_inputs.append((label, selected))
+        return selected
+
     def checkbox(self, label, value=False, **kwargs):
         return self.config.get("checkbox", {}).get(label, value)
 
@@ -242,6 +250,7 @@ class StreamlitRecorder:
         self.success_messages.append(str(text))
 
     def expander(self, label, **kwargs):
+        self.expander_labels.append(str(label))
         return FakeContext()
 
     def text(self, value):
@@ -249,6 +258,9 @@ class StreamlitRecorder:
 
     def code(self, value, **kwargs):
         self.markdowns.append(str(value))
+
+    def json(self, value, **kwargs):
+        self.json_payloads.append(value)
 
 
 def make_streamlit_module(config):
@@ -270,6 +282,7 @@ def make_streamlit_module(config):
     module.video = recorder.video
     module.download_button = recorder.download_button
     module.button = recorder.button
+    module.text_input = recorder.text_input
     module.checkbox = recorder.checkbox
     module.spinner = recorder.spinner
     module.empty = recorder.empty
@@ -287,6 +300,7 @@ def make_streamlit_module(config):
     module.expander = recorder.expander
     module.text = recorder.text
     module.code = recorder.code
+    module.json = recorder.json
     return module, recorder
 
 
@@ -409,6 +423,7 @@ def run_app(monkeypatch, config):
         "app",
         "src.models.load_model",
         "src.utils.ui.theme",
+        "src.utils.ui.ai_coach_panel",
         "src.verticals.home",
         "src.verticals.vertical1",
         "src.verticals.vertical2",
@@ -422,6 +437,21 @@ def run_app(monkeypatch, config):
     except StopExecution:
         pass
     return recorder
+
+
+def load_vertical2_api_event(monkeypatch, config=None):
+    config = config or {"session_state": {}}
+    session_state = dict(config.get("session_state", {}))
+    config = dict(config)
+    config["session_state"] = session_state
+    st_module, recorder = make_streamlit_module(config)
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.utils.ui.ai_coach_panel" in sys.modules:
+        del sys.modules["src.utils.ui.ai_coach_panel"]
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    module = importlib.import_module("src.verticals.vertical2_api_event")
+    return module, recorder
 
 
 def build_full_stats():
@@ -926,6 +956,175 @@ def test_api_event_dashboard_hides_technical_information_by_default(monkeypatch)
     assert len(recorder.plotly_keys) == len(set(recorder.plotly_keys))
 
 
+def test_api_event_dashboard_shows_ai_coach_warning_when_key_is_missing(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        sys.modules["src.utils.ui.ai_coach_panel"],
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": False,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "Falta configurar AI_COACH_API_KEY en el entorno.",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    assert any("AI Tactical Coach" in item for item in recorder.markdowns)
+    assert any("Falta configurar AI_COACH_API_KEY para activar el AI Tactical Coach." in item for item in recorder.warning_messages)
+
+
+def test_api_event_dashboard_can_generate_ai_coach_diagnosis_and_debug_context(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Generar diagnóstico táctico": True},
+        },
+    )
+    import src.utils.ui.ai_coach_panel as ai_coach_panel
+
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "generate_tactical_diagnosis",
+        lambda match_context: {
+            "ok": True,
+            "diagnosis": "Diagnóstico táctico de prueba.",
+            "error": "",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "answer_coach_question",
+        lambda match_context, user_question, conversation_history=None: {
+            "ok": True,
+            "answer": "Respuesta de prueba.",
+            "error": "",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.1,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=True)
+
+    assert any("Diagnóstico táctico de prueba." in item for item in recorder.markdowns)
+    assert "Match Context enviado al AI Coach" in recorder.expander_labels
+    assert recorder.json_payloads
+
+
+def test_api_event_config_debug_status_hides_secret_values(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        module,
+        "get_api_football_config_status",
+        lambda: {
+            "configured": True,
+            "message": "API-Football configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": False,
+            "api_key_configured": False,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://example.com/v1/chat/completions",
+            "message": "Falta configurar AI_COACH_API_KEY en el entorno.",
+        },
+    )
+
+    module._render_environment_config_status(show_technical_info=True)
+
+    assert any("Estado seguro de configuración" in item for item in recorder.captions)
+    assert "Estado técnico de variables de entorno" in recorder.expander_labels
+    assert recorder.json_payloads
+    serialized = str(recorder.json_payloads[-1])
+    assert "demo-key" not in serialized
+    assert "secret" not in serialized
+
+
 def test_api_football_provider_sections_show_technical_tables_only_in_debug(monkeypatch):
     st_module, recorder = make_streamlit_module({"session_state": {}})
     monkeypatch.setitem(sys.modules, "streamlit", st_module)
@@ -975,6 +1174,249 @@ def test_api_football_provider_sections_show_technical_tables_only_in_debug(monk
     recorder.dataframe_calls = 0
     _render_api_football_provider_sections(result, show_technical_info=True)
     assert recorder.dataframe_calls >= 1
+
+
+def test_statsbomb_provider_loads_dashboard_from_local_history(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Cargar desde historial local": True},
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+    canonical_events = [
+        {
+            "event_id": "1",
+            "match_id": "3775648",
+            "team_id": "779",
+            "team_name": "Argentina",
+            "player_id": "p1",
+            "player_name": "Lionel Messi",
+            "minute": 10,
+            "second": 5,
+            "event_type": "Pass",
+            "x": 42.0,
+            "y": 30.0,
+            "end_x": 61.0,
+            "end_y": 34.0,
+            "outcome": "Complete",
+            "progressive": True,
+            "under_pressure": False,
+            "xG": 0.0,
+            "xA": 0.0,
+        }
+    ]
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: True)
+    monkeypatch.setattr(
+        module,
+        "load_processed_match_payloads",
+        lambda provider, match_id: {
+            "raw_events": [{"id": "raw-1"}],
+            "canonical_events": canonical_events,
+            "metrics": {"total_events": 1},
+        },
+    )
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    stored = recorder.session_state[module.SESSION_RESULT_KEY]
+    assert stored["provider"] == module.STORAGE_PROVIDER_STATSBOMB
+    assert stored["loaded_from_local"] is True
+    assert stored["match_id"] == "3775648"
+    assert ("Eventos analizados", "1") in recorder.metrics
+
+
+def test_statsbomb_provider_warns_on_persistence_failure_but_keeps_dashboard(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Cargar datos": True},
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+    raw_events = [
+        {
+            "id": "evt-1",
+            "team": {"id": 779, "name": "Argentina"},
+            "player": {"id": 10, "name": "Lionel Messi"},
+            "minute": 10,
+            "second": 5,
+            "type": {"name": "Pass"},
+            "location": [42.0, 30.0],
+            "pass": {"end_location": [61.0, 34.0]},
+        }
+    ]
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "_cached_events", lambda match_id: raw_events)
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: False)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    def _raise_on_save(*args, **kwargs):
+        raise RuntimeError("sqlite unavailable")
+
+    monkeypatch.setattr(module, "save_processed_match", _raise_on_save)
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    assert any("No se pudo guardar el partido en historial local" in item for item in recorder.warning_messages)
+    assert ("Eventos analizados", "1") in recorder.metrics
+    assert recorder.plotly_calls >= 1
+
+
+def test_api_football_provider_translates_plan_error_in_ui(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Buscar partidos": True},
+        },
+    )
+
+    country = {"name": "Argentina", "display_name": "Argentina"}
+    league = {
+        "league_id": 130,
+        "league_name": "Copa Argentina",
+        "display_name": "Copa Argentina (Argentina)",
+        "seasons": [{"year": 2024}, {"year": 2023}],
+        "current_season": 2024,
+    }
+    error_status = {
+        "status": "error",
+        "message": "API-Football devolvió errores en la respuesta.",
+        "errors": ["plan: Free plans do not have access to this season, try from 2022 to 2024."],
+    }
+
+    monkeypatch.setattr(module, "get_api_football_api_key", lambda: "test-key")
+    monkeypatch.setattr(module, "_cached_api_countries", lambda: [country])
+    monkeypatch.setattr(module, "_cached_api_leagues", lambda country=None, season=None, search=None: [league])
+    monkeypatch.setattr(module, "_cached_api_fixtures", lambda league_id, season, last=None: [])
+    monkeypatch.setattr(module, "get_api_football_status", lambda: error_status)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_api_football_provider(show_technical_info=False)
+
+    assert any("Tu plan actual no tiene acceso a la temporada seleccionada" in item for item in recorder.warning_messages)
+
+
+def test_api_football_dashboard_without_coordinates_shows_message_and_skips_maps(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_API_FOOTBALL,
+        "match_id": "12345",
+        "competition_name": "Liga Profesional",
+        "match_label": "River Plate vs Boca Juniors",
+        "raw_payload": {"events": []},
+        "canonical_events": [
+            {
+                "event_id": "12345-0-goal-15",
+                "match_id": "12345",
+                "team_id": "435",
+                "team_name": "River Plate",
+                "player_id": "unknown-player",
+                "player_name": "Jugador desconocido",
+                "minute": 15,
+                "second": 0,
+                "event_type": "Goal",
+                "x": None,
+                "y": None,
+                "end_x": None,
+                "end_y": None,
+                "outcome": "Normal Goal",
+                "progressive": False,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(
+        result,
+        selected_team="Todos",
+        selected_player="Todos",
+        show_technical_info=False,
+    )
+
+    assert any("Este provider no entrega coordenadas de eventos para este partido" in item for item in recorder.info_messages)
+    assert recorder.plotly_calls == 0
+
+
+def test_statsbomb_provider_ignores_stale_session_result_from_other_provider(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {
+                "vertical2_api_event_result": {
+                    "provider": "api_football",
+                    "match_id": "old-fixture",
+                    "canonical_events": [{"event_id": "stale"}],
+                    "raw_payload": {"events": [{"id": "stale"}]},
+                }
+            }
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: False)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    assert any("Configurá filtros y presioná 'Cargar datos' para ver métricas e insights." in item for item in recorder.info_messages)
+    assert ("Eventos analizados", "1") not in recorder.metrics
 
 
 def test_component_build_centroid_heatmap_handles_empty_and_valid():

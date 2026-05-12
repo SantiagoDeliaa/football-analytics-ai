@@ -37,6 +37,27 @@ def test_api_football_request_returns_empty_when_key_is_missing(monkeypatch):
     assert "API_FOOTBALL_KEY" in status["message"]
 
 
+def test_api_football_config_status_is_safe_and_uses_env(monkeypatch):
+    monkeypatch.setattr(ingestion, "_ENV_LOADED", True)
+    monkeypatch.setenv("API_FOOTBALL_KEY", "demo-key")
+
+    status = ingestion.get_api_football_config_status()
+
+    assert status["configured"] is True
+    assert "demo-key" not in json.dumps(status)
+
+
+def test_api_football_config_status_reports_missing_key_without_env_dependency(monkeypatch):
+    monkeypatch.setattr(ingestion, "_ENV_LOADED", True)
+    monkeypatch.setattr(ingestion, "PROJECT_ROOT", Path("Z:/no-env-for-tests"))
+    monkeypatch.delenv("API_FOOTBALL_KEY", raising=False)
+
+    status = ingestion.get_api_football_config_status()
+
+    assert status["configured"] is False
+    assert "API_FOOTBALL_KEY" in status["message"]
+
+
 def test_api_football_request_returns_response_payload_and_status(monkeypatch):
     monkeypatch.setattr(ingestion, "_ENV_LOADED", True)
     monkeypatch.setenv("API_FOOTBALL_KEY", "demo-key")

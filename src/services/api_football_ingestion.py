@@ -46,12 +46,26 @@ def _load_local_env_file(force_reload: bool = False) -> None:
 
 
 def get_api_football_api_key() -> str | None:
-    _load_local_env_file()
-    api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
+    api_key = str(os.getenv("API_FOOTBALL_KEY", "") or "").strip()
+    if not api_key:
+        _load_local_env_file()
+        api_key = str(os.getenv("API_FOOTBALL_KEY", "") or "").strip()
     if not api_key:
         _load_local_env_file(force_reload=True)
-        api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
+        api_key = str(os.getenv("API_FOOTBALL_KEY", "") or "").strip()
     return api_key or None
+
+
+def get_api_football_config_status() -> dict[str, Any]:
+    api_key = get_api_football_api_key()
+    return {
+        "configured": bool(api_key),
+        "message": (
+            "API-Football configurado correctamente."
+            if api_key
+            else "Falta configurar API_FOOTBALL_KEY en el entorno."
+        ),
+    }
 
 
 def _set_status(

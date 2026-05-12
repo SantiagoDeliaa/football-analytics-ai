@@ -20,6 +20,13 @@ El sistema transforma datos crudos en inteligencia táctica. El producto comerci
 - No hardcodear API keys ni secretos en código o docs.
 - No guardar credenciales en repositorio.
 - `API_FOOTBALL_KEY` debe manejarse por variable de entorno o `.env` local no versionado.
+- `AI_COACH_API_KEY` debe manejarse por variable de entorno o `.env` local no versionado.
+
+## AI Tactical Coach
+- El AI Coach debe consumir `match_context` estructurado como entrada principal.
+- No debe consumir raw provider data completo por defecto.
+- Si faltan datos o el provider no ofrece cierta granularidad, la respuesta debe declarar esa limitacion de forma explicita.
+- El uso futuro de raw data solo debe habilitarse mediante retrieval controlado y con cuidado de licencia/seguridad.
 
 ## Cumplimiento por provider
 - Cualquier nuevo provider debe validarse contra términos de licencia y uso.

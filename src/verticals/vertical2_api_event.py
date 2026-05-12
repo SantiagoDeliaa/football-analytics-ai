@@ -5,6 +5,8 @@ from typing import Any, Callable
 
 import streamlit as st
 
+from src.services.ai_coach import get_ai_coach_config_status
+from src.services.api_football_ingestion import get_api_football_config_status
 from src.services.api_football_ingestion import get_api_football_api_key
 from src.services.api_football_ingestion import get_api_football_countries
 from src.services.api_football_ingestion import get_api_football_fixture_events
@@ -35,6 +37,7 @@ from src.services.storage.event_data_repository import get_processed_matches
 from src.services.storage.event_data_repository import has_processed_match
 from src.services.storage.event_data_repository import load_processed_match_payloads
 from src.services.storage.event_data_repository import save_processed_match
+from src.utils.ui.ai_coach_panel import render_ai_coach_panel
 
 STORAGE_PROVIDER_STATSBOMB = "statsbomb"
 STORAGE_PROVIDER_API_FOOTBALL = "api_football"
@@ -270,6 +273,36 @@ def _render_proprietary_metric_card(
     st.caption(description)
 
 
+def _render_environment_config_status(show_technical_info: bool = False) -> None:
+    ai_status = get_ai_coach_config_status()
+    api_status = get_api_football_config_status()
+
+    st.caption(
+        "Estado seguro de configuración: "
+        f"API-Football {'configurado' if api_status.get('configured') else 'no configurado'} | "
+        f"AI Coach {'configurado' if ai_status.get('configured') else 'no configurado'}"
+    )
+
+    if not show_technical_info:
+        return
+
+    with st.expander("Estado técnico de variables de entorno"):
+        st.json(
+            {
+                "API_FOOTBALL_KEY": {"configured": bool(api_status.get("configured"))},
+                "AI_COACH_API_KEY": {"configured": bool(ai_status.get("api_key_configured"))},
+                "AI_COACH_MODEL": {
+                    "configured": bool(ai_status.get("model_configured")),
+                    "using_default": not bool(ai_status.get("model_configured")),
+                },
+                "AI_COACH_BASE_URL": {
+                    "configured": bool(ai_status.get("base_url_configured")),
+                    "using_default": not bool(ai_status.get("base_url_configured")),
+                },
+            }
+        )
+
+
 def _has_pitch_coordinates(canonical_events: list[dict[str, Any]]) -> bool:
     return any(
         isinstance(event.get("x"), (int, float)) and isinstance(event.get("y"), (int, float))
@@ -407,6 +440,15 @@ def _render_common_event_dashboard(
             label=str(metrics.get("player_influence_label", "No aplica")),
             description="Sintetiza la participación del jugador en volumen de juego, progresión, amenaza y recuperación.",
         )
+
+    render_ai_coach_panel(
+        result=result,
+        metrics=metrics,
+        insights=insights,
+        selected_team=selected_team,
+        selected_player=selected_player,
+        show_technical_info=show_technical_info,
+    )
 
     st.markdown("### Visualizaciones tácticas")
     if not has_coordinates:
@@ -701,6 +743,10 @@ def _render_statsbomb_provider(show_technical_info: bool = False) -> None:
                         "provider": STORAGE_PROVIDER_STATSBOMB,
                         "match_id": current_match_key,
                         "competition_name": selected_competition.get("competition_name", "Competición"),
+                        "season_name": selected_competition.get("season_name", ""),
+                        "home_team": selected_match.get("home_team", ""),
+                        "away_team": selected_match.get("away_team", ""),
+                        "match_date": selected_match.get("match_date", ""),
                         "match_label": selected_match.get("display_name", "Partido"),
                         "raw_events_count": len(raw_events),
                         "raw_payload": raw_events,
@@ -722,6 +768,10 @@ def _render_statsbomb_provider(show_technical_info: bool = False) -> None:
             "provider": STORAGE_PROVIDER_STATSBOMB,
             "match_id": current_match_key,
             "competition_name": selected_competition.get("competition_name", "Competición"),
+            "season_name": selected_competition.get("season_name", ""),
+            "home_team": selected_match.get("home_team", ""),
+            "away_team": selected_match.get("away_team", ""),
+            "match_date": selected_match.get("match_date", ""),
             "match_label": selected_match.get("display_name", "Partido"),
             "raw_events_count": len(raw_events),
             "raw_payload": raw_events,
@@ -878,6 +928,10 @@ def _render_api_football_provider(show_technical_info: bool = False) -> None:
                         "provider": STORAGE_PROVIDER_API_FOOTBALL,
                         "match_id": current_match_key,
                         "competition_name": selected_league.get("league_name", "Liga"),
+                        "season_name": str(selected_season),
+                        "home_team": selected_fixture.get("home_team", ""),
+                        "away_team": selected_fixture.get("away_team", ""),
+                        "match_date": selected_fixture.get("match_date", ""),
                         "match_label": selected_fixture.get("display_name", "Partido"),
                         "raw_events_count": len((raw_payload.get("events", []) if isinstance(raw_payload, dict) else [])),
                         "raw_payload": raw_payload,
@@ -911,6 +965,10 @@ def _render_api_football_provider(show_technical_info: bool = False) -> None:
             "provider": STORAGE_PROVIDER_API_FOOTBALL,
             "match_id": current_match_key,
             "competition_name": selected_league.get("league_name", "Liga"),
+            "season_name": str(selected_season),
+            "home_team": selected_fixture.get("home_team", ""),
+            "away_team": selected_fixture.get("away_team", ""),
+            "match_date": selected_fixture.get("match_date", ""),
             "match_label": selected_fixture.get("display_name", "Partido"),
             "raw_events_count": len(raw_events),
             "raw_payload": raw_payload,
@@ -952,6 +1010,12 @@ def render_vertical2_api_event() -> None:
     st.subheader("API Event Data")
     st.caption("Conectá datos de eventos desde proveedores externos para generar métricas tácticas propietarias.")
     show_technical_info = st.checkbox("Mostrar información técnica", value=False)
+    _render_environment_config_status(show_technical_info=show_technical_info)
+    ai_coach_status = get_ai_coach_config_status()
+    if ai_coach_status.get("configured"):
+        st.caption("AI Coach configurado.")
+    else:
+        st.caption("AI Tactical Coach disponible al configurar AI_COACH_API_KEY.")
     try:
         initialize_event_data_db()
     except Exception as exc:
