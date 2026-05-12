@@ -128,6 +128,7 @@ class StreamlitRecorder:
         self.placeholder_texts = []
         self.progress_values = []
         self.plotly_calls = 0
+        self.plotly_keys = []
         self.dataframe_calls = 0
         self.download_buttons = []
         self.sidebar_headers = []
@@ -223,6 +224,7 @@ class StreamlitRecorder:
 
     def plotly_chart(self, *args, **kwargs):
         self.plotly_calls += 1
+        self.plotly_keys.append(kwargs.get("key"))
 
     def image(self, *args, **kwargs):
         return None
@@ -544,10 +546,10 @@ def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
 
 def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
     recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "vertical2"}})
-    assert "Vertical 2 — Data Analytics" in recorder.headers
+    assert "Data Analytics" in recorder.headers
     assert any("Sube un PDF Wyscout" in msg for msg in recorder.info_messages)
     assert "Subir reporte Wyscout (.pdf)" in recorder.file_uploaders
-    assert recorder.tabs_labels == ["Subir PDF", "API Event Data"]
+    assert recorder.tabs_labels == ["API Event Data", "Load PDF"]
     assert "API Event Data" in recorder.subheaders
     assert recorder.sidebar_subheaders == []
 
@@ -879,6 +881,100 @@ def test_open_event_visualizations_render_visible_traces_and_keep_pitch_below():
     progressive_map = create_progressive_actions_map(canonical_events, selected_team="Argentina")
     assert len(progressive_map.data) >= 1
     assert progressive_map.data[0].mode == "lines+markers"
+
+
+def test_api_event_dashboard_hides_technical_information_by_default(monkeypatch):
+    st_module, recorder = make_streamlit_module({"session_state": {}})
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    from src.verticals.vertical2_api_event import _render_common_event_dashboard
+
+    result = {
+        "competition_name": "UEFA Euro",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    _render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    assert "Información técnica" not in recorder.markdowns
+    assert not any("Canonical Event Model" in item for item in recorder.markdowns)
+    assert all(key is not None for key in recorder.plotly_keys)
+    assert len(recorder.plotly_keys) == len(set(recorder.plotly_keys))
+
+
+def test_api_football_provider_sections_show_technical_tables_only_in_debug(monkeypatch):
+    st_module, recorder = make_streamlit_module({"session_state": {}})
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    from src.verticals.vertical2_api_event import _render_api_football_provider_sections
+
+    result = {
+        "raw_payload": {
+            "events": [
+                {
+                    "time": {"elapsed": 12},
+                    "team": {"name": "Argentina"},
+                    "player": {"name": "Lionel Messi"},
+                    "type": "Goal",
+                    "detail": "Normal Goal",
+                    "comments": "",
+                }
+            ],
+            "lineups": [
+                {
+                    "team": {"name": "Argentina"},
+                    "formation": "4-3-3",
+                    "startXI": [{"player": {"name": "Lionel Messi"}}],
+                    "substitutes": [{"player": {"name": "Julian Alvarez"}}],
+                }
+            ],
+            "statistics": [
+                {
+                    "team": {"name": "Argentina"},
+                    "statistics": [{"type": "Shots on Goal", "value": 5}],
+                }
+            ],
+            "players": [
+                {
+                    "team": {"name": "Argentina"},
+                    "players": [{"player": {"name": "Lionel Messi", "age": 36, "pos": "F", "number": 10}}],
+                }
+            ],
+        },
+        "canonical_events": [],
+    }
+
+    _render_api_football_provider_sections(result, show_technical_info=False)
+    assert recorder.dataframe_calls == 0
+
+    recorder.dataframe_calls = 0
+    _render_api_football_provider_sections(result, show_technical_info=True)
+    assert recorder.dataframe_calls >= 1
 
 
 def test_component_build_centroid_heatmap_handles_empty_and_valid():

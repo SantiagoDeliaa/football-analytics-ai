@@ -115,7 +115,11 @@ def render_vertical2_pdf() -> None:
 
     st.subheader("Radar Táctico")
     st.caption("Comparativa rápida de cinco dimensiones clave del comportamiento colectivo.")
-    st.plotly_chart(_build_tactical_radar(proprietary_metrics, normalized_payload), use_container_width=True)
+    st.plotly_chart(
+        _build_tactical_radar(proprietary_metrics, normalized_payload),
+        use_container_width=True,
+        key="vertical2-pdf-radar",
+    )
 
     st.subheader("Insights del Partido")
     if insights:
@@ -133,7 +137,7 @@ def render_vertical2_pdf() -> None:
         st.caption(attack_view.get("subtitle", "Vista ofensiva del comportamiento del equipo."))
         if not attack_view.get("has_signal", True):
             st.info("Señales ofensivas limitadas en este reporte. Mostramos mapa base con información mínima.")
-        st.plotly_chart(attack_view.get("figure"), use_container_width=True)
+        st.plotly_chart(attack_view.get("figure"), use_container_width=True, key="vertical2-pdf-attack-view")
 
     with defense_tab:
         defense_view = build_pitch_view_figure("Defense", normalized_payload)
@@ -141,7 +145,7 @@ def render_vertical2_pdf() -> None:
         st.caption(defense_view.get("subtitle", "Vista defensiva del comportamiento del equipo."))
         if not defense_view.get("has_signal", True):
             st.info("Señales defensivas limitadas en este reporte. Mostramos mapa base con información mínima.")
-        st.plotly_chart(defense_view.get("figure"), use_container_width=True)
+        st.plotly_chart(defense_view.get("figure"), use_container_width=True, key="vertical2-pdf-defense-view")
 
     with transitions_tab:
         transitions_view = build_pitch_view_figure("Transitions", normalized_payload)
@@ -149,7 +153,11 @@ def render_vertical2_pdf() -> None:
         st.caption(transitions_view.get("subtitle", "Vista de transiciones del comportamiento del equipo."))
         if not transitions_view.get("has_signal", True):
             st.info("Señales de transición limitadas en este reporte. Mostramos mapa base con información mínima.")
-        st.plotly_chart(transitions_view.get("figure"), use_container_width=True)
+        st.plotly_chart(
+            transitions_view.get("figure"),
+            use_container_width=True,
+            key="vertical2-pdf-transitions-view",
+        )
 
     preview = {
         "status": normalized_payload.get("status", "warning"),
@@ -168,16 +176,16 @@ def render_vertical2_pdf() -> None:
 
 
 def render_vertical2() -> None:
-    st.title("Vertical 2 — Data Analytics")
+    st.title("Data Analytics")
     st.caption("Resumen táctico automático desde reportes, pensado para lectura rápida de analistas y scouts.")
     if st.button("Volver a Home", key="vertical2_back_home"):
         st.session_state.active_vertical = "home"
         st.rerun()
 
-    pdf_tab, api_tab = st.tabs(["Subir PDF", "API Event Data"])
-
-    with pdf_tab:
-        render_vertical2_pdf()
+    api_tab, pdf_tab = st.tabs(["API Event Data", "Load PDF"])
 
     with api_tab:
         render_vertical2_api_event()
+
+    with pdf_tab:
+        render_vertical2_pdf()

@@ -315,10 +315,12 @@ def _render_common_event_dashboard(
     result: dict[str, Any],
     selected_team: str,
     selected_player: str,
+    show_technical_info: bool = False,
 ) -> None:
     canonical_events = result.get("canonical_events", []) or []
     team_filter = None if selected_team == "Todos" else selected_team
     player_filter = None if selected_player == "Todos" else selected_player
+    chart_scope = f"{result.get('provider', 'provider')}-{result.get('match_id', 'match')}-{selected_team}-{selected_player}"
     metrics = calculate_open_event_metrics(
         canonical_events,
         selected_team=team_filter,
@@ -420,21 +422,25 @@ def _render_common_event_dashboard(
             st.plotly_chart(
                 create_event_map(canonical_events, selected_team=team_filter, selected_player=player_filter),
                 use_container_width=True,
+                key=f"event-map-{chart_scope}",
             )
         with shots_tab:
             st.plotly_chart(
                 create_shot_map(canonical_events, selected_team=team_filter, selected_player=player_filter),
                 use_container_width=True,
+                key=f"shot-map-{chart_scope}",
             )
         with progressive_tab:
             st.plotly_chart(
                 create_progressive_actions_map(canonical_events, selected_team=team_filter, selected_player=player_filter),
                 use_container_width=True,
+                key=f"progressive-map-{chart_scope}",
             )
         with recoveries_tab:
             st.plotly_chart(
                 create_recoveries_map(canonical_events, selected_team=team_filter, selected_player=player_filter),
                 use_container_width=True,
+                key=f"recoveries-map-{chart_scope}",
             )
 
     st.markdown("#### Insights iniciales")
@@ -466,15 +472,22 @@ def _render_common_event_dashboard(
             st.plotly_chart(
                 create_player_action_map(canonical_events, selected_player=selected_player),
                 use_container_width=True,
+                key=f"player-action-map-{chart_scope}",
             )
         else:
             st.info("No hay coordenadas disponibles para mostrar el mapa de acciones del jugador.")
     else:
         st.info("Seleccioná un jugador específico para ver su mapa de acciones.")
 
-    st.markdown("### Modelo canónico")
-    with st.expander("Ver preview del Canonical Event Model (JSON)"):
-        st.code(json.dumps(canonical_events[:10], indent=2, ensure_ascii=False), language="json")
+    if show_technical_info:
+        st.markdown("### Información técnica")
+        with st.expander("Ver preview del Canonical Event Model (JSON)"):
+            st.code(json.dumps(canonical_events[:10], indent=2, ensure_ascii=False), language="json")
+        with st.expander("Ver payload del provider (JSON)"):
+            raw_payload_preview = result.get("raw_payload", {})
+            if isinstance(raw_payload_preview, list):
+                raw_payload_preview = raw_payload_preview[:10]
+            st.code(json.dumps(raw_payload_preview, indent=2, ensure_ascii=False), language="json")
 
 
 def _summarize_api_football_events(raw_events: list[dict[str, Any]]) -> dict[str, int]:
@@ -491,7 +504,7 @@ def _summarize_api_football_events(raw_events: list[dict[str, Any]]) -> dict[str
     return summary
 
 
-def _render_api_football_provider_sections(result: dict[str, Any]) -> None:
+def _render_api_football_provider_sections(result: dict[str, Any], show_technical_info: bool = False) -> None:
     raw_payload = result.get("raw_payload", {}) or {}
     raw_events = raw_payload.get("events", []) or []
     lineups = raw_payload.get("lineups", []) or []
@@ -518,96 +531,97 @@ def _render_api_football_provider_sections(result: dict[str, Any]) -> None:
     with extra_col3:
         st.metric("Sustituciones detectadas", summary["sustituciones"])
 
-    st.markdown("### Timeline de eventos")
-    if not raw_events:
-        st.info("No hay eventos cronológicos disponibles para este partido.")
-    else:
-        timeline_rows = []
-        for event in raw_events[:50]:
-            team_name = str((event.get("team") or {}).get("name", "") or "")
-            player_name = str((event.get("player") or {}).get("name", "") or "")
-            elapsed = (event.get("time") or {}).get("elapsed", 0)
-            timeline_rows.append(
-                {
-                    "Minuto": elapsed,
-                    "Equipo": team_name,
-                    "Jugador": player_name or "Jugador desconocido",
-                    "Tipo": event.get("type", ""),
-                    "Detalle": event.get("detail", ""),
-                    "Comentario": event.get("comments", ""),
-                }
-            )
-        st.dataframe(timeline_rows, use_container_width=True, hide_index=True)
-
-    st.markdown("### Estadísticas por equipo")
-    if not statistics:
-        st.info("No hay estadísticas por equipo disponibles.")
-    else:
-        stats_rows = []
-        for team_block in statistics:
-            team_name = str((team_block.get("team") or {}).get("name", "") or "Equipo")
-            for stat in team_block.get("statistics", []) or []:
-                stats_rows.append(
-                    {
-                        "Equipo": team_name,
-                        "Métrica": stat.get("type", ""),
-                        "Valor": stat.get("value", ""),
-                    }
-                )
-        st.dataframe(stats_rows, use_container_width=True, hide_index=True)
-
-    st.markdown("### Lineups")
+    st.markdown("### Resumen de formaciones")
     if not lineups:
         st.info("No hay formaciones disponibles para este partido.")
     else:
-        for lineup in lineups:
+        lineup_columns = st.columns(max(1, min(2, len(lineups))))
+        for index, lineup in enumerate(lineups):
             team_name = str((lineup.get("team") or {}).get("name", "") or "Equipo")
             formation = str(lineup.get("formation", "") or "Sin formación reportada")
-            start_xi = [
+            starters = [
                 str(((entry.get("player") or {}).get("name", "")) or "")
                 for entry in lineup.get("startXI", []) or []
                 if ((entry.get("player") or {}).get("name"))
             ]
-            with st.expander(f"{team_name} | Formación: {formation}"):
-                if start_xi:
-                    st.markdown("**Titulares**")
-                    for player_name in start_xi:
-                        st.markdown(f"- {player_name}")
-                else:
-                    st.caption("Sin titulares reportados.")
+            substitutes = [
+                str(((entry.get("player") or {}).get("name", "")) or "")
+                for entry in lineup.get("substitutes", []) or []
+                if ((entry.get("player") or {}).get("name"))
+            ]
+            with lineup_columns[index % len(lineup_columns)]:
+                st.markdown(f"**{team_name}**")
+                st.caption(f"Formación: {formation}")
+                st.caption(f"Titulares reportados: {len(starters)}")
+                st.caption(f"Suplentes reportados: {len(substitutes)}")
+                if starters:
+                    st.caption("Primeros titulares detectados: " + ", ".join(starters[:5]))
 
-    st.markdown("### Jugadores")
-    if not players:
-        st.info("No hay detalle de jugadores disponible.")
+    st.markdown("### Estadísticas destacadas")
+    if not statistics:
+        st.info("No hay estadísticas por equipo disponibles.")
     else:
-        player_rows = []
-        for team_block in players:
+        stat_columns = st.columns(max(1, min(2, len(statistics))))
+        for index, team_block in enumerate(statistics):
             team_name = str((team_block.get("team") or {}).get("name", "") or "Equipo")
-            for player_block in team_block.get("players", []) or []:
-                player_info = player_block.get("player", {}) or {}
-                player_rows.append(
-                    {
-                        "Equipo": team_name,
-                        "Jugador": player_info.get("name", ""),
-                        "Edad": player_info.get("age", ""),
-                        "Posición": player_info.get("pos", ""),
-                        "Número": player_info.get("number", ""),
-                    }
-                )
-        st.dataframe(player_rows, use_container_width=True, hide_index=True)
+            with stat_columns[index % len(stat_columns)]:
+                st.markdown(f"**{team_name}**")
+                for stat in (team_block.get("statistics", []) or [])[:6]:
+                    stat_type = str(stat.get("type", "") or "Métrica")
+                    stat_value = stat.get("value", "N/D")
+                    st.caption(f"{stat_type}: {stat_value}")
 
-    st.markdown("### Preview del provider")
-    with st.expander("Ver payloads crudos y modelo canónico"):
-        st.markdown("**Raw events**")
-        st.code(json.dumps(raw_events[:10], indent=2, ensure_ascii=False), language="json")
-        st.markdown("**Lineups**")
-        st.code(json.dumps(lineups[:2], indent=2, ensure_ascii=False), language="json")
-        st.markdown("**Statistics**")
-        st.code(json.dumps(statistics[:2], indent=2, ensure_ascii=False), language="json")
-        st.markdown("**Players**")
-        st.code(json.dumps(players[:2], indent=2, ensure_ascii=False), language="json")
-        st.markdown("**Canonical events**")
-        st.code(json.dumps((result.get("canonical_events", []) or [])[:10], indent=2, ensure_ascii=False), language="json")
+    if show_technical_info:
+        st.markdown("### Información técnica del provider")
+        if raw_events:
+            with st.expander("Ver timeline de eventos"):
+                timeline_rows = []
+                for event in raw_events[:50]:
+                    team_name = str((event.get("team") or {}).get("name", "") or "")
+                    player_name = str((event.get("player") or {}).get("name", "") or "")
+                    elapsed = (event.get("time") or {}).get("elapsed", 0)
+                    timeline_rows.append(
+                        {
+                            "Minuto": elapsed,
+                            "Equipo": team_name,
+                            "Jugador": player_name or "Jugador desconocido",
+                            "Tipo": event.get("type", ""),
+                            "Detalle": event.get("detail", ""),
+                            "Comentario": event.get("comments", ""),
+                        }
+                    )
+                st.dataframe(timeline_rows, use_container_width=True, hide_index=True)
+        if statistics:
+            with st.expander("Ver tabla técnica de estadísticas por equipo"):
+                stats_rows = []
+                for team_block in statistics:
+                    team_name = str((team_block.get("team") or {}).get("name", "") or "Equipo")
+                    for stat in team_block.get("statistics", []) or []:
+                        stats_rows.append(
+                            {
+                                "Equipo": team_name,
+                                "Métrica": stat.get("type", ""),
+                                "Valor": stat.get("value", ""),
+                            }
+                        )
+                st.dataframe(stats_rows, use_container_width=True, hide_index=True)
+        if players:
+            with st.expander("Ver detalle técnico de jugadores"):
+                player_rows = []
+                for team_block in players:
+                    team_name = str((team_block.get("team") or {}).get("name", "") or "Equipo")
+                    for player_block in team_block.get("players", []) or []:
+                        player_info = player_block.get("player", {}) or {}
+                        player_rows.append(
+                            {
+                                "Equipo": team_name,
+                                "Jugador": player_info.get("name", ""),
+                                "Edad": player_info.get("age", ""),
+                                "Posición": player_info.get("pos", ""),
+                                "Número": player_info.get("number", ""),
+                            }
+                        )
+                st.dataframe(player_rows, use_container_width=True, hide_index=True)
 
 
 def _build_team_and_player_options(
@@ -628,7 +642,7 @@ def _build_team_and_player_options(
     return selected_team, selected_player
 
 
-def _render_statsbomb_provider() -> None:
+def _render_statsbomb_provider(show_technical_info: bool = False) -> None:
     st.markdown("#### Configuración de StatsBomb Open Data")
     competitions = _cached_competitions()
     _render_fallback_warning("competitions")
@@ -747,10 +761,10 @@ def _render_statsbomb_provider() -> None:
         detail = f" ({status_msg})" if status_msg else ""
         st.warning(f"Mostrando datos de fallback para eventos{detail}")
 
-    _render_common_event_dashboard(result, selected_team, selected_player)
+    _render_common_event_dashboard(result, selected_team, selected_player, show_technical_info=show_technical_info)
 
 
-def _render_api_football_provider() -> None:
+def _render_api_football_provider(show_technical_info: bool = False) -> None:
     st.markdown("#### Configuración de API-Football")
     api_key = get_api_football_api_key()
     if not api_key:
@@ -930,13 +944,14 @@ def _render_api_football_provider() -> None:
         st.info("Seleccioná país, liga, temporada y partido; luego presioná 'Cargar datos'.")
         return
 
-    _render_api_football_provider_sections(result)
-    _render_common_event_dashboard(result, selected_team, selected_player)
+    _render_api_football_provider_sections(result, show_technical_info=show_technical_info)
+    _render_common_event_dashboard(result, selected_team, selected_player, show_technical_info=show_technical_info)
 
 
 def render_vertical2_api_event() -> None:
     st.subheader("API Event Data")
     st.caption("Conectá datos de eventos desde proveedores externos para generar métricas tácticas propietarias.")
+    show_technical_info = st.checkbox("Mostrar información técnica", value=False)
     try:
         initialize_event_data_db()
     except Exception as exc:
@@ -949,7 +964,7 @@ def render_vertical2_api_event() -> None:
     )
 
     if provider == "StatsBomb Open Data":
-        _render_statsbomb_provider()
+        _render_statsbomb_provider(show_technical_info=show_technical_info)
         return
 
-    _render_api_football_provider()
+    _render_api_football_provider(show_technical_info=show_technical_info)
