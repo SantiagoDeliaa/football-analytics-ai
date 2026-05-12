@@ -25,7 +25,8 @@ class _FakeResponse:
 
 
 def test_api_football_request_returns_empty_when_key_is_missing(monkeypatch):
-    monkeypatch.setattr(ingestion, "_ENV_LOADED", True)
+    monkeypatch.setattr(ingestion, "_ENV_LOADED", False)
+    monkeypatch.setattr(ingestion, "PROJECT_ROOT", Path("Z:/no-env-for-tests"))
     monkeypatch.delenv("API_FOOTBALL_KEY", raising=False)
 
     payload = ingestion.api_football_request("/countries")
@@ -71,3 +72,14 @@ def test_api_football_request_handles_api_errors(monkeypatch):
     assert payload == []
     assert status["status"] == "error"
     assert status["errors"]
+
+
+def test_api_football_user_message_translates_plan_errors():
+    message = ingestion.get_api_football_user_message(
+        {
+            "message": "API-Football devolvió errores en la respuesta.",
+            "errors": ["plan: Free plans do not have access to this season, try from 2022 to 2024."],
+        }
+    )
+
+    assert "Tu plan actual no tiene acceso a la temporada seleccionada" in message

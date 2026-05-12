@@ -14,6 +14,7 @@ from src.services.api_football_ingestion import get_api_football_fixture_statist
 from src.services.api_football_ingestion import get_api_football_fixtures
 from src.services.api_football_ingestion import get_api_football_leagues
 from src.services.api_football_ingestion import get_api_football_status
+from src.services.api_football_ingestion import get_api_football_user_message
 from src.services.api_football_normalizer import normalize_api_football_events_to_canonical
 from src.services.open_event_data_ingestion import (
     get_available_competitions,
@@ -806,10 +807,24 @@ def _render_api_football_provider() -> None:
         index=season_index,
     )
 
-    fixtures = _cached_api_fixtures(selected_league.get("league_id"), selected_season, 10)
+    search_signature = f"{selected_league.get('league_id')}-{selected_season}"
+    if st.button("Buscar partidos", key="vertical2_api_football_search_button", use_container_width=True):
+        fixtures = _cached_api_fixtures(selected_league.get("league_id"), selected_season, None)
+        st.session_state["vertical2_api_football_fixture_search"] = {
+            "signature": search_signature,
+            "fixtures": fixtures,
+            "status": get_api_football_status(),
+        }
+        st.rerun()
+
+    fixture_search = st.session_state.get("vertical2_api_football_fixture_search", {})
+    fixtures = fixture_search.get("fixtures", []) if fixture_search.get("signature") == search_signature else []
+    search_status = fixture_search.get("status", {}) if fixture_search.get("signature") == search_signature else {}
     if not fixtures:
-        status = get_api_football_status()
-        st.warning(status.get("message", "No se pudieron cargar partidos para la liga y temporada seleccionadas."))
+        if search_status.get("status") == "error":
+            st.warning(get_api_football_user_message(search_status))
+        else:
+            st.info("Seleccioná una liga y temporada, luego presioná 'Buscar partidos' para cargar partidos disponibles.")
         _render_local_history(STORAGE_PROVIDER_API_FOOTBALL)
         return
 
@@ -862,7 +877,7 @@ def _render_api_football_provider() -> None:
 
     status = get_api_football_status()
     if status.get("status") == "error":
-        st.warning(status.get("message", "Hay un problema consultando API-Football."))
+        st.warning(get_api_football_user_message(status))
 
     if st.button("Cargar datos", key="vertical2_api_football_load_button", use_container_width=True):
         fixture_id = selected_fixture.get("fixture_id")

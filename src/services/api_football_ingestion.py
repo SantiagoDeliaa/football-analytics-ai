@@ -23,9 +23,9 @@ _LAST_API_FOOTBALL_STATUS: dict[str, Any] = {
 }
 
 
-def _load_local_env_file() -> None:
+def _load_local_env_file(force_reload: bool = False) -> None:
     global _ENV_LOADED
-    if _ENV_LOADED:
+    if _ENV_LOADED and not force_reload:
         return
     env_path = PROJECT_ROOT / ".env"
     if env_path.exists():
@@ -48,6 +48,9 @@ def _load_local_env_file() -> None:
 def get_api_football_api_key() -> str | None:
     _load_local_env_file()
     api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
+    if not api_key:
+        _load_local_env_file(force_reload=True)
+        api_key = os.environ.get("API_FOOTBALL_KEY", "").strip()
     return api_key or None
 
 
@@ -71,6 +74,19 @@ def _set_status(
 
 def get_api_football_status() -> dict[str, Any]:
     return deepcopy(_LAST_API_FOOTBALL_STATUS)
+
+
+def get_api_football_user_message(status: dict[str, Any] | None = None) -> str:
+    resolved_status = status or get_api_football_status()
+    errors = [str(item) for item in resolved_status.get("errors", []) or [] if item]
+    lowered_errors = [item.lower() for item in errors]
+    if any("this season" in item and "free plans" in item for item in lowered_errors):
+        return "Tu plan actual no tiene acceso a la temporada seleccionada. Probá una temporada habilitada por tu plan."
+    if any("last parameter" in item and "free plans" in item for item in lowered_errors):
+        return "Tu plan actual no tiene acceso al filtro de ultimos partidos. Probá buscar la temporada sin ese filtro."
+    if errors:
+        return f"{resolved_status.get('message', 'API-Football devolvió un error.')} Detalle: {errors[0]}"
+    return str(resolved_status.get("message", "") or "")
 
 
 def api_football_request(endpoint: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -244,7 +260,7 @@ def get_api_football_leagues(
 def get_api_football_fixtures(
     league_id: int | str,
     season: int | str,
-    last: int | None = 10,
+    last: int | None = None,
     next: int | None = None,
     date: str | None = None,
 ) -> list[dict[str, Any]]:
