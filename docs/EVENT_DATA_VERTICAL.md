@@ -5,7 +5,7 @@ Transformar eventos de partido (PDF o API) en lectura táctica accionable: métr
 
 ## Tabs actuales
 - `Subir PDF`
-- `Datos por API`
+- `API Event Data`
 
 ## Flujo Subir PDF
 - Se mantiene como flujo de demo/fallback.
@@ -13,7 +13,9 @@ Transformar eventos de partido (PDF o API) en lectura táctica accionable: métr
 
 ## Flujo Datos por API
 - Provider activo: StatsBomb Open Data.
-- Provider futuro: API-Football (próximamente).
+- Provider activo: API-Football / API-SPORTS.
+- API-Football requiere `API_FOOTBALL_KEY` por variable de entorno.
+- API-Football puede traer cobertura amplia y partidos actuales, pero no siempre ofrece coordenadas event-level.
 
 ## Pipeline operativo
 ```text
@@ -31,6 +33,8 @@ Provider
 - `src/verticals/vertical2_api_event.py`
 - `src/services/open_event_data_ingestion.py`
 - `src/services/open_event_normalizer.py`
+- `src/services/api_football_ingestion.py`
+- `src/services/api_football_normalizer.py`
 - `src/services/open_event_metrics.py`
 - `src/services/open_event_insights.py`
 - `src/services/open_event_visualizations.py`
@@ -43,3 +47,4 @@ Provider
 - Toda métrica debe calcularse sobre Canonical Event Model.
 - Mantener textos visibles en español.
 - No romper flujo PDF de Vertical 2.
+- Si un provider no entrega coordenadas, no se deben forzar mapas de cancha.

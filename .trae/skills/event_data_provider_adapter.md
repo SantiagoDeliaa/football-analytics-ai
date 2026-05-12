@@ -14,6 +14,8 @@ No conectar un provider directamente a UI.
 - Validar estructura de datos antes de normalizar.
 - No asumir campos obligatorios si el provider no los garantiza.
 - Registrar origen real/fallback cuando corresponda.
+- Si el provider requiere credenciales, usar variables de entorno y nunca hardcodear keys.
+- Si el provider no entrega coordenadas, mapear igual al Canonical Event Model y desactivar visualizaciones espaciales que no apliquen.
 - Actualizar documentación:
   - `docs/CANONICAL_EVENT_MODEL.md`
   - `docs/EVENT_DATA_VERTICAL.md`

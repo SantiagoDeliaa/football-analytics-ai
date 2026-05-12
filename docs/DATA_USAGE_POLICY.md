@@ -19,7 +19,9 @@ El sistema transforma datos crudos en inteligencia táctica. El producto comerci
 ## Seguridad
 - No hardcodear API keys ni secretos en código o docs.
 - No guardar credenciales en repositorio.
+- `API_FOOTBALL_KEY` debe manejarse por variable de entorno o `.env` local no versionado.
 
 ## Cumplimiento por provider
 - Cualquier nuevo provider debe validarse contra términos de licencia y uso.
 - El adapter debe respetar restricciones de atribución y distribución.
+- API-Football / API-SPORTS debe revisarse según su licencia y plan contratado antes de exponer outputs comerciales.

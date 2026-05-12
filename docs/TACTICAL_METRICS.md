@@ -3,6 +3,11 @@
 ## Principio
 Las métricas se calculan sobre `Canonical Event Model`, no sobre payload crudo del provider.
 
+## Compatibilidad por provider
+- StatsBomb Open Data ofrece mejor soporte para métricas espaciales y visualizaciones de cancha.
+- API-Football puede no entregar coordenadas de eventos; en ese caso, las métricas que dependen de `x/y` pueden devolver `No aplica`.
+- Cuando faltan coordenadas, el dashboard prioriza resumen, timeline, estadísticas por equipo, lineups y jugadores.
+
 ## Filtro de eventos analíticos
 Se usa `filter_analytical_events()` para excluir ruido:
 - `Starting XI`
@@ -30,6 +35,7 @@ Se usa `filter_analytical_events()` para excluir ruido:
 - **Campos**: `field_tilt_index`, `field_tilt_label`.
 - **Interpretación**: mayor valor implica mayor dominio territorial.
 - **Limitación**: si no hay equipo filtrado, puede no aplicar.
+- **Dependencia espacial**: requiere coordenadas `x`.
 
 ### 2) Directness Index
 - **Propósito**: medir verticalidad de progresión.
@@ -37,6 +43,7 @@ Se usa `filter_analytical_events()` para excluir ruido:
 - **Campos**: `directness_index`, `directness_label`.
 - **Interpretación**: más alto, mayor agresividad vertical.
 - **Limitación**: con pocos pases puede ser inestable.
+- **Dependencia espacial**: mejora cuando existen progresiones detectables.
 
 ### 3) Progressive Threat Index
 - **Propósito**: medir amenaza ofensiva combinada.
@@ -51,6 +58,7 @@ Se usa `filter_analytical_events()` para excluir ruido:
 - **Campos**: `recovery_height_index`, `recovery_height_label`.
 - **Interpretación**: más alto, presión/recuperación más adelantada.
 - **Limitación**: depende de cantidad/calidad de eventos defensivos.
+- **Dependencia espacial**: requiere coordenadas `x` en recuperaciones.
 
 ### 5) Shot Quality Index
 - **Propósito**: evaluar calidad media de remate.

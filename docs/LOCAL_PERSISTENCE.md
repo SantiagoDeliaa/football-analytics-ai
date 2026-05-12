@@ -10,6 +10,9 @@ Permitir reutilización de partidos procesados sin redescarga completa.
   - `data/event_data/raw/statsbomb/`
   - `data/event_data/canonical/statsbomb/`
   - `data/event_data/metrics/statsbomb/`
+  - `data/event_data/raw/api_football/`
+  - `data/event_data/canonical/api_football/`
+  - `data/event_data/metrics/api_football/`
 
 ## Estrategia
 - SQLite guarda metadata de partidos procesados.
@@ -17,6 +20,11 @@ Permitir reutilización de partidos procesados sin redescarga completa.
   - raw events
   - canonical events
   - metrics
+- En API-Football, el raw payload puede ser combinado:
+  - `events`
+  - `lineups`
+  - `statistics`
+  - `players`
 
 ## Tabla principal
 `processed_matches`

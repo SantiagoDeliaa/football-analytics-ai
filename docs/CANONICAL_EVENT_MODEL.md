@@ -44,6 +44,7 @@ Definir una estructura única de eventos para desacoplar métricas/insights/visu
 
 ## Campos opcionales
 - `x`, `y`, `end_x`, `end_y`, `outcome` pueden ser `null` según tipo de evento.
+- Providers como API-Football pueden no entregar coordenadas; en ese caso `x`, `y`, `end_x`, `end_y` quedan en `null`.
 
 ## Escala de coordenadas
 - StatsBomb usa cancha `120x80`.
@@ -52,12 +53,15 @@ Definir una estructura única de eventos para desacoplar métricas/insights/visu
 - `progressive=true` si `end_x - x >= 15`.
 - `xG` viene de `shot.statsbomb_xg`.
 - `xA` queda en `0.0` por ahora.
+- En API-Football, `event_id` se genera de forma estable con `fixture_id + índice + tipo + tiempo`.
 
 ## Limitaciones actuales
 - Algunas fuentes no proveen todos los campos.
 - `xA` aún no está calculado de forma real.
 - Mapeos de outcome pueden expandirse por provider.
+- API-Football puede aportar eventos, estadísticas, lineups y jugadores sin coordenadas tácticas de cancha.
 
 ## Regla para nuevos provider adapters
 - El adapter debe mapear al modelo canónico sin saltarse ingestion.
 - Debe manejar faltantes sin romper el pipeline.
+- Debe documentar explícitamente si el provider soporta o no coordenadas para visualizaciones de cancha.
