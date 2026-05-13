@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./football-analytics-ai
+      dockerfile: Dockerfile.api
+    container_name: sport-analytics-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./football-analytics-ai:/app
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./front-tip
+      dockerfile: Dockerfile
+    container_name: sport-analytics-frontend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./front-tip:/app
+      - /app/node_modules
+    restart: unless-stopped
