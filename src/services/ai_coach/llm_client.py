@@ -113,20 +113,25 @@ def _friendly_ai_coach_error_message(
             "El AI Coach no tiene cuota disponible en el provider configurado. "
             "Revisá billing, plan o límites del proyecto e intentá nuevamente más tarde."
         )
-    if status_code == 401 or "unauthorized" in normalized or "invalid api key" in normalized:
-        return "La credencial configurada para el AI Coach no es válida o no tiene permisos."
-    if status_code == 403 or "forbidden" in normalized or "permission denied" in normalized:
-        return "El provider rechazó el acceso del AI Coach. Revisá permisos, proyecto y modelo configurado."
     if (
         status_code == 503
         or "service unavailable" in normalized
         or "currently experiencing high demand" in normalized
-        or "status\": \"unavailable\"" in normalized
+        or 'status": "unavailable"' in normalized
     ):
+        if "currently experiencing high demand" in normalized:
+            return (
+                "El provider del AI Coach está saturado en este momento. "
+                "Intentá nuevamente en unos minutos."
+            )
         return (
-            "El provider del AI Coach está saturado en este momento. "
+            "El provider del AI Coach no está disponible en este momento. "
             "Intentá nuevamente en unos minutos."
         )
+    if status_code == 401 or "unauthorized" in normalized or "invalid api key" in normalized:
+        return "La credencial configurada para el AI Coach no es válida o no tiene permisos."
+    if status_code == 403 or "forbidden" in normalized or "permission denied" in normalized:
+        return "El provider rechazó el acceso del AI Coach. Revisá permisos, proyecto y modelo configurado."
     if "model" in normalized and "not found" in normalized:
         return "El modelo configurado para el AI Coach no está disponible en el provider actual."
 

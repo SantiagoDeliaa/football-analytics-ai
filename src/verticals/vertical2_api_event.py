@@ -274,17 +274,11 @@ def _render_proprietary_metric_card(
 
 
 def _render_environment_config_status(show_technical_info: bool = False) -> None:
-    ai_status = get_ai_coach_config_status()
-    api_status = get_api_football_config_status()
-
-    st.caption(
-        "Estado seguro de configuración: "
-        f"API-Football {'configurado' if api_status.get('configured') else 'no configurado'} | "
-        f"AI Coach {'configurado' if ai_status.get('configured') else 'no configurado'}"
-    )
-
     if not show_technical_info:
         return
+
+    ai_status = get_ai_coach_config_status()
+    api_status = get_api_football_config_status()
 
     with st.expander("Estado técnico de variables de entorno"):
         st.json(
@@ -1011,11 +1005,6 @@ def render_vertical2_api_event() -> None:
     st.caption("Conectá datos de eventos desde proveedores externos para generar métricas tácticas propietarias.")
     show_technical_info = st.checkbox("Mostrar información técnica", value=False)
     _render_environment_config_status(show_technical_info=show_technical_info)
-    ai_coach_status = get_ai_coach_config_status()
-    if ai_coach_status.get("configured"):
-        st.caption("AI Coach configurado.")
-    else:
-        st.caption("AI Tactical Coach disponible al configurar AI_COACH_API_KEY.")
     try:
         initialize_event_data_db()
     except Exception as exc:

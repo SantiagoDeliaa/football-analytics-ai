@@ -212,13 +212,15 @@ def test_build_diagnosis_prompt_includes_required_tactical_sections():
     prompt_messages = build_diagnosis_prompt(_sample_match_context())
     combined = "\n".join(item["content"] for item in prompt_messages)
 
-    assert "Diagnóstico general" in combined
-    assert "Fortalezas detectadas" in combined
-    assert "Riesgos o alertas tácticas" in combined
-    assert "Jugadores relevantes, si hay datos" in combined
+    assert "Resumen general del partido" in combined
+    assert "Aspectos positivos" in combined
+    assert "Puntos a mejorar" in combined
+    assert "Jugadores destacados" in combined
     assert "Recomendaciones para el cuerpo técnico" in combined
     assert "Limitaciones de los datos" in combined
-    assert "Preguntas sugeridas para seguir analizando" in combined
+    assert "No menciones nombres de variables internas" in combined
+    assert "dominio territorial" in combined
+    assert "verticalidad del juego" in combined
 
 
 def test_build_question_prompt_includes_user_question_and_match_context():
@@ -233,6 +235,67 @@ def test_build_question_prompt_includes_user_question_and_match_context():
     assert "Mundial" in combined
     assert "StatsBomb 120x80" in combined
     assert "Contexto previo breve." in combined
+    assert "No menciones nombres de variables internas" in combined
+    assert "amenaza ofensiva progresiva" in combined
+
+
+def test_generate_tactical_diagnosis_rewrites_internal_metric_names(monkeypatch):
+    monkeypatch.setattr(
+        coach_service,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "OK",
+        },
+    )
+    monkeypatch.setattr(
+        coach_service,
+        "call_llm",
+        lambda messages: {
+            "ok": True,
+            "content": "Según el field_tilt_index y el directness_index, el equipo dominó el partido.",
+            "error": "",
+        },
+    )
+
+    result = coach_service.generate_tactical_diagnosis(_sample_match_context())
+
+    assert result["ok"] is True
+    assert "field_tilt_index" not in result["diagnosis"]
+    assert "directness_index" not in result["diagnosis"]
+    assert "dominio territorial" in result["diagnosis"]
+    assert "verticalidad del juego" in result["diagnosis"]
+
+
+def test_answer_coach_question_rewrites_internal_metric_names(monkeypatch):
+    monkeypatch.setattr(
+        coach_service,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "OK",
+        },
+    )
+    monkeypatch.setattr(
+        coach_service,
+        "call_llm",
+        lambda messages: {
+            "ok": True,
+            "content": "El player_influence_score de Messi fue alto y has_event_coordinates = false limita el analisis.",
+            "error": "",
+        },
+    )
+
+    result = coach_service.answer_coach_question(_sample_match_context(), "¿Qué jugador fue más influyente?")
+
+    assert result["ok"] is True
+    assert "player_influence_score" not in result["answer"]
+    assert "influencia del jugador" in result["answer"]
+    assert "coordenadas detalladas de los eventos" in result["answer"]
 
 
 def test_call_llm_can_be_mocked_without_real_requests(monkeypatch):
@@ -315,6 +378,7 @@ def test_call_llm_returns_friendly_message_for_provider_high_demand(monkeypatch)
     monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
     monkeypatch.setenv("AI_COACH_API_KEY", "demo-key")
     monkeypatch.setenv("AI_COACH_MODEL", "gemini-2.5-flash-lite")
+
     monkeypatch.setenv("AI_COACH_BASE_URL", "https://example.com/v1/chat/completions")
 
     class _ServiceUnavailableError(HTTPError):
@@ -352,3 +416,47 @@ def test_call_llm_returns_friendly_message_for_provider_high_demand(monkeypatch)
 
     assert result["ok"] is False
     assert "saturado" in result["error"].lower()
+
+
+def test_call_llm_returns_friendly_message_for_service_unavailable_http_error(monkeypatch):
+    monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
+    monkeypatch.setenv("AI_COACH_API_KEY", "demo-key")
+    monkeypatch.setenv("AI_COACH_MODEL", "gemini-2.0-flash")
+    monkeypatch.setenv("AI_COACH_BASE_URL", "https://example.com/v1/chat/completions")
+
+    class _ServiceUnavailableError(HTTPError):
+        def __init__(self):
+            super().__init__(
+                url="https://example.com/v1/chat/completions",
+                code=503,
+                msg="Service Unavailable",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self):
+            return json.dumps(
+                {
+                    "error": {
+                        "code": 503,
+                        "message": "The service is currently unavailable.",
+                        "status": "UNAVAILABLE",
+                    }
+                }
+            ).encode("utf-8")
+
+    def _raise_service_unavailable(request, timeout):
+        raise _ServiceUnavailableError()
+
+    monkeypatch.setattr(llm_client, "urlopen", _raise_service_unavailable)
+
+    result = llm_client.call_llm(
+        [
+            {"role": "system", "content": "Sistema"},
+            {"role": "user", "content": "Usuario"},
+        ]
+    )
+
+    assert result["ok"] is False
+    assert "no está disponible" in result["error"].lower()
+    assert "unos minutos" in result["error"].lower()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from src.services.ai_coach.llm_client import call_llm
@@ -15,6 +16,17 @@ FALLBACK_SUGGESTED_QUESTIONS = [
     "¿Qué limitaciones tienen estos datos?",
 ]
 
+VISIBLE_TERM_REPLACEMENTS = {
+    r"`?field_tilt_index`?": "dominio territorial",
+    r"`?directness_index`?": "verticalidad del juego",
+    r"`?progressive_threat_index`?": "amenaza ofensiva progresiva",
+    r"`?recovery_height_index`?": "altura de recuperación",
+    r"`?shot_quality_index`?": "calidad de remate",
+    r"`?player_influence_score`?": "influencia del jugador",
+    r"`?match_context`?": "contexto táctico disponible",
+    r"`?provider_context`?": "contexto del proveedor",
+}
+
 
 def _validate_match_context(match_context: dict[str, Any] | None) -> str | None:
     if not isinstance(match_context, dict) or not match_context:
@@ -27,6 +39,29 @@ def _validate_ai_coach_configuration() -> str | None:
     if not bool(config_status.get("configured")):
         return str(config_status.get("message") or "El AI Tactical Coach no está configurado.")
     return None
+
+
+def _make_ai_coach_response_user_friendly(content: Any) -> str:
+    normalized = str(content or "").strip()
+    if not normalized:
+        return ""
+
+    for pattern, replacement in VISIBLE_TERM_REPLACEMENTS.items():
+        normalized = re.sub(pattern, replacement, normalized, flags=re.IGNORECASE)
+
+    normalized = re.sub(
+        r"`?has_event_coordinates`?\s*=\s*false",
+        "este proveedor no aporta coordenadas detalladas de los eventos",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"`?has_event_coordinates`?\s*:\s*false",
+        "este proveedor no aporta coordenadas detalladas de los eventos",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return normalized
 
 
 def generate_tactical_diagnosis(match_context: dict[str, Any] | None) -> dict[str, Any]:
@@ -49,7 +84,7 @@ def generate_tactical_diagnosis(match_context: dict[str, Any] | None) -> dict[st
 
     return {
         "ok": True,
-        "diagnosis": str(response.get("content") or ""),
+        "diagnosis": _make_ai_coach_response_user_friendly(response.get("content")),
         "error": "",
     }
 
@@ -86,7 +121,7 @@ def answer_coach_question(
 
     return {
         "ok": True,
-        "answer": str(response.get("content") or ""),
+        "answer": _make_ai_coach_response_user_friendly(response.get("content")),
         "error": "",
     }
 

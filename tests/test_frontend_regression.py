@@ -1008,6 +1008,7 @@ def test_api_event_dashboard_shows_ai_coach_warning_when_key_is_missing(monkeypa
 
     assert any("AI Tactical Coach" in item for item in recorder.markdowns)
     assert any("Falta configurar AI_COACH_API_KEY para activar el AI Tactical Coach." in item for item in recorder.warning_messages)
+    assert all("AI Coach configurado." not in item for item in recorder.captions)
 
 
 def test_api_event_dashboard_can_generate_ai_coach_diagnosis_and_debug_context(monkeypatch):
@@ -1209,12 +1210,43 @@ def test_api_event_config_debug_status_hides_secret_values(monkeypatch):
 
     module._render_environment_config_status(show_technical_info=True)
 
-    assert any("Estado seguro de configuración" in item for item in recorder.captions)
+    assert not any("Estado seguro de configuración" in item for item in recorder.captions)
     assert "Estado técnico de variables de entorno" in recorder.expander_labels
     assert recorder.json_payloads
     serialized = str(recorder.json_payloads[-1])
     assert "demo-key" not in serialized
     assert "secret" not in serialized
+
+
+def test_api_event_config_status_is_hidden_from_main_view(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        module,
+        "get_api_football_config_status",
+        lambda: {
+            "configured": True,
+            "message": "API-Football configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "api_key_configured": True,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://example.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+
+    module._render_environment_config_status(show_technical_info=False)
+
+    assert not recorder.captions
+    assert "Estado técnico de variables de entorno" not in recorder.expander_labels
 
 
 def test_api_football_provider_sections_show_technical_tables_only_in_debug(monkeypatch):
