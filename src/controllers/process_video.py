@@ -7,6 +7,7 @@ from collections import deque, Counter
 import json
 import gzip
 from pathlib import Path
+from typing import Any
 from src.utils.view_transformer import ViewTransformer
 from src.utils.homography_manager import HomographyManager
 from src.utils.radar import SoccerPitchConfiguration, draw_radar_view, draw_radar_with_metrics
@@ -38,7 +39,10 @@ from src.utils.quality_config import (
     ENABLE_COMPRESSION,
     DEMO_DEGRADED_ALLOW,
 )
-from ultralytics import YOLO
+try:
+    from ultralytics import YOLO
+except ModuleNotFoundError:  # pragma: no cover - optional for lightweight test environments
+    YOLO = Any
 
 REFEREE_OVERLAY_TEAM_DISTANCE_THRESHOLD = 50.0
 REFEREE_SHIRT_CYAN_HUE_MIN = 75.0

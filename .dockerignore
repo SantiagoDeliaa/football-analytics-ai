@@ -1,0 +1,15 @@
+.git
+.github
+.trae
+__pycache__
+.pytest_cache
+.mypy_cache
+.venv
+venv
+node_modules
+front-tip/node_modules
+front-tip/dist
+dist
+outputs
+.DS_Store
+Thumbs.db

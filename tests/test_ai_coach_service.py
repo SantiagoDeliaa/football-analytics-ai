@@ -374,6 +374,50 @@ def test_call_llm_returns_friendly_message_for_quota_exceeded_http_error(monkeyp
     assert "billing" in result["error"].lower()
 
 
+def test_call_llm_returns_friendly_message_for_provider_high_demand(monkeypatch):
+    monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
+    monkeypatch.setenv("AI_COACH_API_KEY", "demo-key")
+    monkeypatch.setenv("AI_COACH_MODEL", "gemini-2.5-flash-lite")
+
+    monkeypatch.setenv("AI_COACH_BASE_URL", "https://example.com/v1/chat/completions")
+
+    class _ServiceUnavailableError(HTTPError):
+        def __init__(self):
+            super().__init__(
+                url="https://example.com/v1/chat/completions",
+                code=503,
+                msg="Service Unavailable",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self):
+            return json.dumps(
+                {
+                    "error": {
+                        "code": 503,
+                        "message": "This model is currently experiencing high demand. Please try again later.",
+                        "status": "UNAVAILABLE",
+                    }
+                }
+            ).encode("utf-8")
+
+    def _raise_service_unavailable(request, timeout):
+        raise _ServiceUnavailableError()
+
+    monkeypatch.setattr(llm_client, "urlopen", _raise_service_unavailable)
+
+    result = llm_client.call_llm(
+        [
+            {"role": "system", "content": "Sistema"},
+            {"role": "user", "content": "Usuario"},
+        ]
+    )
+
+    assert result["ok"] is False
+    assert "saturado" in result["error"].lower()
+
+
 def test_call_llm_returns_friendly_message_for_service_unavailable_http_error(monkeypatch):
     monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
     monkeypatch.setenv("AI_COACH_API_KEY", "demo-key")

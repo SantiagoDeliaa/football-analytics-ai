@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 DEFAULT_AI_COACH_MODEL = "gpt-4o-mini"
 DEFAULT_AI_COACH_BASE_URL = "https://api.openai.com/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 20.0
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 _ENV_LOADED = False
 
@@ -113,7 +113,17 @@ def _friendly_ai_coach_error_message(
             "El AI Coach no tiene cuota disponible en el provider configurado. "
             "Revisá billing, plan o límites del proyecto e intentá nuevamente más tarde."
         )
-    if status_code == 503 or "service unavailable" in normalized or '"status": "unavailable"' in normalized:
+    if (
+        status_code == 503
+        or "service unavailable" in normalized
+        or "currently experiencing high demand" in normalized
+        or 'status": "unavailable"' in normalized
+    ):
+        if "currently experiencing high demand" in normalized:
+            return (
+                "El provider del AI Coach está saturado en este momento. "
+                "Intentá nuevamente en unos minutos."
+            )
         return (
             "El provider del AI Coach no está disponible en este momento. "
             "Intentá nuevamente en unos minutos."

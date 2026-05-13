@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: sport-analytics-backend
+    environment:
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY:-}
+      AI_COACH_API_KEY: ${AI_COACH_API_KEY:-}
+      AI_COACH_MODEL: ${AI_COACH_MODEL:-}
+      AI_COACH_BASE_URL: ${AI_COACH_BASE_URL:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./api:/app/api
+      - ./src:/app/src
+      - ./app.py:/app/app.py
+      - ./requirements.txt:/app/requirements.txt
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./front-tip
+      dockerfile: Dockerfile
+    container_name: sport-analytics-frontend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+      VITE_APP_ENV: production
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./front-tip:/app
+      - /app/node_modules
+    restart: unless-stopped

@@ -46,6 +46,7 @@ def ingest_pdf(uploaded_file: Any) -> dict[str, Any]:
         "file_name": getattr(uploaded_file, "name", "unknown.pdf"),
         "bytes_size": 0,
         "page_count": 0,
+        "parser_used": None,
         "pages": [],
         "raw_text": "",
         "messages": [],
@@ -103,6 +104,7 @@ def ingest_pdf(uploaded_file: Any) -> dict[str, Any]:
         return result
 
     result["page_count"] = page_count
+    result["parser_used"] = parser_used
     result["pages"] = [
         {"page_number": idx + 1, "char_count": len(text), "text": text}
         for idx, text in enumerate(pages)

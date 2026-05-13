@@ -7,12 +7,21 @@ Permitir reutilización de partidos procesados sin redescarga completa.
 - SQLite:
   - `data/tip_event_data.sqlite`
 - JSON locales:
-  - `data/event_data/raw/statsbomb/`
-  - `data/event_data/canonical/statsbomb/`
-  - `data/event_data/metrics/statsbomb/`
+  - `data/event_data/raw/statsbomb_open_data/`
+  - `data/event_data/canonical/statsbomb_open_data/`
+  - `data/event_data/metrics/statsbomb_open_data/`
   - `data/event_data/raw/api_football/`
   - `data/event_data/canonical/api_football/`
   - `data/event_data/metrics/api_football/`
+
+## Fixtures locales de referencia
+- `data/tip_event_data.sqlite`
+- `data/event_data/raw/statsbomb_open_data/3895302.json`
+- `data/event_data/canonical/statsbomb_open_data/3895302.json`
+- `data/event_data/metrics/statsbomb_open_data/3895302.json`
+
+Estos archivos sirven como contexto minimo reproducible para agentes, pruebas manuales y validacion de persistencia local.
+Se mantienen locales en el workspace y `data/` continua ignorado por Git para no versionar persistencia de demo.
 
 ## Estrategia
 - SQLite guarda metadata de partidos procesados.
