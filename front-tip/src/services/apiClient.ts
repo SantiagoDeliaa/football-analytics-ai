@@ -1,7 +1,9 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.trim() ||
-  import.meta.env.VITE_STREAMLIT_BACKEND_URL?.trim() ||
-  'http://localhost:8000'
+const explicitApiBaseUrl = [
+  import.meta.env.VITE_API_BASE_URL?.trim(),
+  import.meta.env.VITE_STREAMLIT_BACKEND_URL?.trim(),
+].find((value): value is string => Boolean(value))
+
+const API_BASE_URL = explicitApiBaseUrl ?? (import.meta.env.DEV ? 'http://localhost:8000' : '')
 
 export class ApiError extends Error {
   status: number

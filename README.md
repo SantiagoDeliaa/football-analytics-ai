@@ -3,9 +3,8 @@ title: Soccer Analytics AI
 emoji: ⚽
 colorFrom: green
 colorTo: blue
-sdk: streamlit
-sdk_version: 1.32.0
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 ---
@@ -26,6 +25,13 @@ Este repositorio concentra el estado integrado del proyecto:
 - `app.py` y `src/streamlit_app.py` siguen disponibles como interfaz legacy y referencia funcional.
 
 La prioridad actual es sostener una demo sólida con visual moderna, buena UX y compatibilidad con la lógica existente.
+
+En este estado del repo, el despliegue objetivo para publicar la UI moderna quedó alineado con **Hugging Face Docker Spaces**:
+
+- `README.md` raíz configurado con `sdk: docker`;
+- `Dockerfile` raíz multi-stage para compilar `front-tip` y levantar FastAPI en `7860`;
+- FastAPI sirviendo el build React y resolviendo rutas SPA;
+- frontend consumiendo `/api/*` en misma origin en producción.
 
 ## Funcionalidades Principales
 
@@ -111,6 +117,27 @@ Legacy Streamlit:
 streamlit run app.py
 ```
 
+### Opción 3: Hugging Face Spaces
+
+El repo ya quedó adaptado para publicar la UI moderna del proyecto en Hugging Face usando:
+
+- usar `Docker Space`;
+- construir `front-tip` en producción;
+- servir el build React desde FastAPI;
+- exponer todo en el puerto `7860`.
+
+Validación local realizada sobre esta configuración:
+
+- `npm ci`
+- `npm run build`
+- `python -m compileall api src`
+- `docker build -t sport-analytics-hf-recovery -f Dockerfile .`
+- `docker run --rm -p 7860:7860 sport-analytics-hf-recovery`
+- verificación de `GET /api/health`
+- verificación de `GET /`
+
+La guía paso a paso y los requisitos operativos quedaron documentados en `docs/HUGGINGFACE_DEPLOY.md`.
+
 ## Endpoints principales
 
 - `GET /api/v1/event-data/competitions`
@@ -126,7 +153,7 @@ streamlit run app.py
 ## Estructura del Proyecto
 
 ```text
-football-analytics-ai-final/
+football-analytics-ai-recovery/
 ├── api/                 # FastAPI y contratos HTTP
 ├── data/                # fixtures y persistencia local de demo
 ├── docs/                # documentación viva del producto y arquitectura
@@ -135,6 +162,7 @@ football-analytics-ai-final/
 ├── src/                 # dominio analítico legado y servicios compartidos
 ├── tests/               # pruebas backend, regresión y soporte Streamlit
 ├── .trae/               # contexto para agentes, skills y reglas
+├── Dockerfile           # runtime final para Hugging Face Docker Space
 ├── Dockerfile.api
 ├── docker-compose.yml
 ├── app.py
@@ -182,6 +210,13 @@ npm run build
 ```
 
 Para una validación guiada del estado integrado, ver `docs/INTEGRATION_VALIDATION.md`.
+
+Para validar específicamente el runtime final de Hugging Face:
+
+```bash
+docker build -t sport-analytics-hf-recovery -f Dockerfile .
+docker run --rm -p 7860:7860 sport-analytics-hf-recovery
+```
 
 ## Créditos
 

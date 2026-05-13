@@ -13,6 +13,7 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 - Deuda técnica y roadmap de evolución.
 - Flujo de trabajo para agentes/desarrolladores.
 - Validación integrada de frontend + backend.
+- Guía concreta de despliegue en Hugging Face Spaces.
 
 ## Orden recomendado de lectura
 1. `PRODUCT_CONTEXT.md`
@@ -25,6 +26,7 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 8. `TECH_DEBT_AND_REFACTORING.md`
 9. `AGENT_WORKFLOW.md`
 10. `INTEGRATION_VALIDATION.md`
+11. `HUGGINGFACE_DEPLOY.md`
 
 ## Cómo usar esta documentación
 - Antes de implementar cambios, leer al menos `PRODUCT_CONTEXT.md` y `ARCHITECTURE.md`.
@@ -32,3 +34,4 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 - Si cambian métricas o insights, actualizar `TACTICAL_METRICS.md`.
 - Si cambia almacenamiento local, actualizar `LOCAL_PERSISTENCE.md`.
 - Si cambia el estado de integración frontend/backend, actualizar `INTEGRATION_VALIDATION.md`.
+- Si cambia la estrategia de despliegue, actualizar `HUGGINGFACE_DEPLOY.md`.
