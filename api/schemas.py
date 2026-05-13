@@ -14,6 +14,24 @@ class CompetitionResponse(BaseModel):
     display_name: str
 
 
+class ApiFootballCountryResponse(BaseModel):
+    name: str
+    code: str = ""
+    flag: str = ""
+    display_name: str
+
+
+class ApiFootballLeagueResponse(BaseModel):
+    league_id: int | None = None
+    league_name: str
+    country_name: str
+    type: str = ""
+    logo: str = ""
+    seasons: list[int] = Field(default_factory=list)
+    current_season: int | None = None
+    display_name: str
+
+
 class MatchResponse(BaseModel):
     match_id: int | None = None
     home_team: str
@@ -37,16 +55,60 @@ class EventDataAnalyzeRequest(BaseModel):
     match_date: str | None = None
 
 
+class CoachConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
 class EventDataResultResponse(BaseModel):
+    provider: str
     match_id: str
     competition_name: str
+    season_name: str = ""
     match_label: str
+    home_team: str = ""
+    away_team: str = ""
+    match_date: str = ""
     canonical_events: list[dict[str, Any]]
     metrics: dict[str, Any]
     insights: list[str]
     raw_events_count: int
+    raw_payload: Any | None = None
     used_fallback_events: bool
     events_status_message: str
+
+
+class EventDataCoachRequest(EventDataAnalyzeRequest):
+    pass
+
+
+class EventDataCoachQuestionRequest(EventDataCoachRequest):
+    question: str
+    conversation_history: list[CoachConversationMessage] = Field(default_factory=list)
+
+
+class CoachDiagnosisResponse(BaseModel):
+    ok: bool
+    diagnosis: str
+    error: str
+    suggested_questions: list[str] = Field(default_factory=list)
+
+
+class CoachAnswerResponse(BaseModel):
+    ok: bool
+    answer: str
+    error: str
+    suggested_questions: list[str] = Field(default_factory=list)
+
+
+class CoachConfigStatusResponse(BaseModel):
+    configured: bool
+    api_key_configured: bool = False
+    model_configured: bool = False
+    base_url_configured: bool = False
+    model: str
+    base_url: str
+    message: str
 
 
 class ProcessedMatchSummaryResponse(BaseModel):
@@ -71,7 +133,10 @@ class PdfAnalysisResponse(BaseModel):
 class ComputerVisionConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    model_name: Literal["yolov8n.pt", "yolov8s.pt"] = "yolov8n.pt"
+    model_name: Literal["yolov8n.pt", "yolov8s.pt", "yolov8m.pt", "yolov8l.pt", "yolov8x.pt"] = "yolov8n.pt"
+    player_model_source: Literal["builtin", "custom"] = "builtin"
+    ball_model_source: Literal["heuristic", "custom"] = "heuristic"
+    pitch_source: Literal["homography", "soccana", "full_field_approx"] = "homography"
     confidence: float = Field(default=0.25, ge=0.1, le=0.95)
     image_size: Literal[640, 720, 960] = 640
     only_person: bool = True
@@ -103,6 +168,11 @@ class ComputerVisionResultResponse(BaseModel):
     possession: dict[str, Any] | None = None
     scouting: dict[str, Any]
     exports: dict[str, bool]
+    quality_control: dict[str, Any] | None = None
+    speed_distance: dict[str, Any] | None = None
+    scouting_heatmaps: dict[str, Any] | None = None
+    homography_telemetry: dict[str, Any] | None = None
+    artifacts: dict[str, str | None] | None = None
     warnings: list[str]
     interpretation: list[str]
 

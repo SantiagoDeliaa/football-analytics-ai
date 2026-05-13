@@ -22,6 +22,8 @@ def analyze_video(
     source_mode: str,
     config: ComputerVisionConfig,
     upload_file: UploadFile | None = None,
+    player_model_file: UploadFile | None = None,
+    ball_model_file: UploadFile | None = None,
     soccernet_path: str | None = None,
 ) -> dict[str, Any]:
     try:
@@ -30,6 +32,12 @@ def analyze_video(
             upload_file=upload_file,
             soccernet_path=soccernet_path,
             config=config,
+        )
+        runtime_assets, cleanup_dir = prepare_runtime_assets(
+            config=config,
+            cleanup_dir=cleanup_dir,
+            player_model_file=player_model_file,
+            ball_model_file=ball_model_file,
         )
     except HTTPException:
         raise
@@ -41,6 +49,7 @@ def analyze_video(
         video_name=video_name,
         config=config,
         cleanup_dir=cleanup_dir,
+        runtime_assets=runtime_assets,
     )
 
 
@@ -50,21 +59,27 @@ def analyze_video_from_source(
     video_name: str,
     config: ComputerVisionConfig,
     cleanup_dir: Path | None,
+    runtime_assets: dict[str, Path | None] | None = None,
 ) -> dict[str, Any]:
     try:
         OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
         target_path = OUTPUT_ROOT / f"{Path(source_path).stem}_processed.mp4"
         from src.controllers.process_video import process_video
 
-        player_model = _load_player_model(config.model_name)
-        pitch_model = _load_pitch_model() if config.enable_radar else None
-        full_field_approx = bool(config.full_field_approx or (config.enable_radar and pitch_model is None))
+        player_model = _resolve_player_model(config, runtime_assets)
+        ball_model = _resolve_ball_model(config, runtime_assets)
+        pitch_model = _resolve_pitch_model(config) if config.enable_radar else None
+        full_field_approx = bool(
+            config.full_field_approx
+            or config.pitch_source == "full_field_approx"
+            or (config.enable_radar and pitch_model is None)
+        )
 
         process_video(
             source_path=str(source_path),
             target_path=str(target_path),
             player_model=player_model,
-            ball_model=None,
+            ball_model=ball_model,
             pitch_model=pitch_model,
             conf=float(config.confidence),
             detection_mode="players_and_ball",
@@ -82,7 +97,12 @@ def analyze_video_from_source(
             raise RuntimeError("El pipeline terminó sin generar el JSON de estadísticas.")
 
         stats_payload = json.loads(stats_path.read_text(encoding="utf-8"))
-        return _map_stats_to_response(stats_payload, video_name)
+        return _map_stats_to_response(
+            stats_payload,
+            video_name,
+            target_path=target_path,
+            stats_path=stats_path,
+        )
     except Exception as exc:
         return _build_mock_result(video_name=video_name, config=config, message=str(exc))
     finally:
@@ -153,6 +173,44 @@ def prepare_job_source(
     )
 
 
+def prepare_runtime_assets(
+    *,
+    config: ComputerVisionConfig,
+    cleanup_dir: Path | None,
+    player_model_file: UploadFile | None = None,
+    ball_model_file: UploadFile | None = None,
+) -> tuple[dict[str, Path | None], Path | None]:
+    runtime_dir = cleanup_dir
+
+    def ensure_runtime_dir() -> Path:
+        nonlocal runtime_dir
+        if runtime_dir is None:
+            runtime_dir = Path(tempfile.mkdtemp(prefix="cv-assets-"))
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        return runtime_dir
+
+    player_model_path: Path | None = None
+    if config.player_model_source == "custom":
+        player_model_path = _save_upload_file(
+            upload_file=player_model_file,
+            target_dir=ensure_runtime_dir(),
+            error_detail="Debés subir un modelo custom de jugadores (.pt).",
+        )
+
+    ball_model_path: Path | None = None
+    if config.ball_model_source == "custom":
+        ball_model_path = _save_upload_file(
+            upload_file=ball_model_file,
+            target_dir=ensure_runtime_dir(),
+            error_detail="Debés subir un modelo custom de pelota (.pt).",
+        )
+
+    return {
+        "player_model_path": player_model_path,
+        "ball_model_path": ball_model_path,
+    }, runtime_dir
+
+
 @lru_cache(maxsize=4)
 def _load_player_model(model_name: str):
     from ultralytics import YOLO
@@ -161,8 +219,14 @@ def _load_player_model(model_name: str):
 
 
 @lru_cache(maxsize=2)
-def _load_pitch_model():
+def _load_pitch_model(pitch_source: str):
     from ultralytics import YOLO
+
+    if pitch_source == "soccana":
+        soccana_path = MODEL_ROOT / "soccana_keypoint" / "Model" / "weights" / "best.pt"
+        if soccana_path.exists():
+            return YOLO(str(soccana_path))
+        return None
 
     homography_path = MODEL_ROOT / "homography.pt"
     if homography_path.exists():
@@ -170,12 +234,73 @@ def _load_pitch_model():
     return None
 
 
-def _map_stats_to_response(stats_payload: dict[str, Any], video_name: str) -> dict[str, Any]:
+def _resolve_player_model(
+    config: ComputerVisionConfig,
+    runtime_assets: dict[str, Path | None] | None,
+):
+    from ultralytics import YOLO
+
+    if config.player_model_source == "custom":
+        player_model_path = runtime_assets.get("player_model_path") if runtime_assets else None
+        if player_model_path is None:
+            raise RuntimeError("No se encontró el modelo custom de jugadores.")
+        return YOLO(str(player_model_path))
+    return _load_player_model(config.model_name)
+
+
+def _resolve_ball_model(
+    config: ComputerVisionConfig,
+    runtime_assets: dict[str, Path | None] | None,
+):
+    from ultralytics import YOLO
+
+    if config.ball_model_source != "custom":
+        return None
+
+    ball_model_path = runtime_assets.get("ball_model_path") if runtime_assets else None
+    if ball_model_path is None:
+        raise RuntimeError("No se encontró el modelo custom de pelota.")
+    return YOLO(str(ball_model_path))
+
+
+def _resolve_pitch_model(config: ComputerVisionConfig):
+    if config.pitch_source == "full_field_approx":
+        return None
+    return _load_pitch_model(config.pitch_source)
+
+
+def _save_upload_file(
+    *,
+    upload_file: UploadFile | None,
+    target_dir: Path,
+    error_detail: str,
+) -> Path:
+    if upload_file is None or not upload_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail,
+        )
+
+    target_path = target_dir / upload_file.filename
+    target_path.write_bytes(upload_file.file.read())
+    return target_path
+
+
+def _map_stats_to_response(
+    stats_payload: dict[str, Any],
+    video_name: str,
+    *,
+    target_path: Path | None = None,
+    stats_path: Path | None = None,
+) -> dict[str, Any]:
     health_summary = stats_payload.get("health_summary", {}) or {}
     quality_control = stats_payload.get("quality_control", {}) or {}
     timeline = stats_payload.get("timeline", {}) or {}
     metrics = stats_payload.get("metrics", {}) or {}
     possession = stats_payload.get("possession") or None
+    scouting_heatmaps = stats_payload.get("scouting_heatmaps") or None
+    speed_distance = stats_payload.get("speed_distance") or None
+    homography_telemetry = stats_payload.get("homography_telemetry") or None
 
     return {
         "source": "api",
@@ -197,7 +322,16 @@ def _map_stats_to_response(stats_payload: dict[str, Any], video_name: str) -> di
         },
         "possession": _map_possession(possession),
         "scouting": _map_scouting(metrics, quality_control),
+        "quality_control": quality_control,
+        "speed_distance": speed_distance,
+        "scouting_heatmaps": scouting_heatmaps,
+        "homography_telemetry": homography_telemetry,
         "exports": {"json": True, "csv": True, "pdf": False},
+        "artifacts": {
+            "video_url": _artifact_url(target_path),
+            "stats_json_url": _artifact_url(stats_path),
+            "pdf_url": None,
+        },
         "warnings": list(quality_control.get("warnings") or []),
         "interpretation": _build_interpretation(health_summary),
     }
@@ -230,6 +364,11 @@ def _map_possession(possession: dict[str, Any] | None) -> dict[str, Any] | None:
             * 100.0
         ),
         "unknown_pct": None if possession.get("demo_ready", True) else 100,
+        "total_frames_analyzed": int(possession.get("total_frames_analyzed", 0) or 0),
+        "top_possessors": list(possession.get("top_possessors") or []),
+        "passes": dict(possession.get("passes") or {}),
+        "timeline": dict(possession.get("timeline") or {}),
+        "reason": possession.get("reason"),
     }
 
 
@@ -317,6 +456,12 @@ def _confidence_score(label: str) -> int:
     return 68
 
 
+def _artifact_url(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    return f"/api/static/computer-vision/{path.name}"
+
+
 def _build_mock_result(video_name: str, config: ComputerVisionConfig, message: str) -> dict[str, Any]:
     duration = float(config.duration_seconds if config.segment_mode else 18.4)
     total_frames = int(round(duration * 25))
@@ -383,6 +528,17 @@ def _build_mock_result(video_name: str, config: ComputerVisionConfig, message: s
             "team2_pct": 39,
             "contested_pct": 7,
             "unknown_pct": None,
+            "total_frames_analyzed": total_frames,
+            "top_possessors": [
+                {"tracker_id": 8, "frames": 64, "team": "team1"},
+                {"tracker_id": 4, "frames": 49, "team": "team2"},
+            ],
+            "passes": {"team1_passes": 14, "team2_passes": 9, "turnovers": 5, "total": 28},
+            "timeline": {
+                "frames": [0, 60, 120, 180],
+                "state": ["team1", "team1", "contested", "team2"],
+            },
+            "reason": None,
         },
         "scouting": {
             "confidence": {
@@ -403,6 +559,57 @@ def _build_mock_result(video_name: str, config: ComputerVisionConfig, message: s
             },
         },
         "exports": {"json": True, "csv": True, "pdf": False},
+        "quality_control": {
+            "confidence_grade_team1": "Alta",
+            "confidence_grade_team2": "Media",
+            "warnings": ["High fallback ratio"],
+            "heatmap_total_samples_team1": 48,
+            "heatmap_total_samples_team2": 44,
+        },
+        "speed_distance": {
+            "per_team": {
+                "team1": {
+                    "total_distance_m": 1124.0,
+                    "avg_distance_m": 140.5,
+                    "max_speed_kmh": 29.7,
+                    "player_count": 8,
+                    "total_sprints": 12,
+                    "total_sprint_distance_m": 148.4,
+                },
+                "team2": {
+                    "total_distance_m": 1016.0,
+                    "avg_distance_m": 127.0,
+                    "max_speed_kmh": 27.9,
+                    "player_count": 8,
+                    "total_sprints": 9,
+                    "total_sprint_distance_m": 102.2,
+                },
+            },
+            "per_player": {
+                "8": {
+                    "distance_m": 168.2,
+                    "max_speed_kmh": 29.7,
+                    "team": "team1",
+                    "sprint_count": 3,
+                    "sprint_distance_m": 34.1,
+                    "intensity_zones_m": {"walk": 44.0, "jog": 78.0, "run": 32.2, "sprint": 14.0},
+                }
+            },
+        },
+        "scouting_heatmaps": {
+            "team1": {"total_samples": 48, "downsampled_shape": [20, 20]},
+            "team2": {"total_samples": 44, "downsampled_shape": [20, 20]},
+            "bins_shape": [26, 17],
+        },
+        "homography_telemetry": {
+            "frame_number": [0, 60, 120],
+            "homography_mode": ["homography", "homography", "fallback"],
+        },
+        "artifacts": {
+            "video_url": None,
+            "stats_json_url": None,
+            "pdf_url": None,
+        },
         "warnings": [
             "Demo degradado: las métricas son aproximadas si la homografía no es estable.",
             "La posesión depende de señal de balón consistente.",

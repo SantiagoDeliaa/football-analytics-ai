@@ -30,6 +30,10 @@ export function EventHistoryPanel({ entries, activeMatchId, onLoad }: EventHisto
         <div className="mt-4 space-y-3">
           {entries.map((entry) => {
             const isActive = entry.result.match_id === activeMatchId
+            const buttonLabel = isActive ? 'Partido activo' : 'Cargar historial'
+            const accessibleButtonLabel = isActive
+              ? `${entry.match_label} activo`
+              : `Cargar ${entry.match_label} desde historial local`
 
             return (
               <article
@@ -53,11 +57,12 @@ export function EventHistoryPanel({ entries, activeMatchId, onLoad }: EventHisto
                   </div>
 
                   <button
+                    aria-label={accessibleButtonLabel}
                     className="rounded-md border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-emerald-400 hover:bg-slate-800"
                     onClick={() => onLoad(entry)}
                     type="button"
                   >
-                    {isActive ? 'Partido activo' : 'Cargar historial'}
+                    {buttonLabel}
                   </button>
                 </div>
               </article>

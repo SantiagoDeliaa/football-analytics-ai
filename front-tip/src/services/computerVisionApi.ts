@@ -1,6 +1,7 @@
 import { API_BASE_URL, ApiError } from './apiClient'
 import type {
   ComputerVisionConfig,
+  ComputerVisionModelAssets,
   ComputerVisionJob,
   ComputerVisionResult,
   VideoSourceInput,
@@ -115,6 +116,7 @@ function buildMockResult(source: VideoSourceInput, config: ComputerVisionConfig)
 export async function analyzeComputerVisionVideo(params: {
   source: VideoSourceInput
   config: ComputerVisionConfig
+  assets?: ComputerVisionModelAssets
 }): Promise<ComputerVisionResult> {
   const formData = new FormData()
   formData.append('source_mode', params.source.source_mode)
@@ -126,6 +128,14 @@ export async function analyzeComputerVisionVideo(params: {
 
   if (params.source.soccernet_path) {
     formData.append('soccernet_path', params.source.soccernet_path)
+  }
+
+  if (params.assets?.playerModelFile) {
+    formData.append('player_model_file', params.assets.playerModelFile)
+  }
+
+  if (params.assets?.ballModelFile) {
+    formData.append('ball_model_file', params.assets.ballModelFile)
   }
 
   try {
@@ -145,7 +155,11 @@ export async function analyzeComputerVisionVideo(params: {
   }
 }
 
-function buildFormData(params: { source: VideoSourceInput; config: ComputerVisionConfig }) {
+function buildFormData(params: {
+  source: VideoSourceInput
+  config: ComputerVisionConfig
+  assets?: ComputerVisionModelAssets
+}) {
   const formData = new FormData()
   formData.append('source_mode', params.source.source_mode)
   formData.append('config', JSON.stringify(params.config))
@@ -158,12 +172,21 @@ function buildFormData(params: { source: VideoSourceInput; config: ComputerVisio
     formData.append('soccernet_path', params.source.soccernet_path)
   }
 
+  if (params.assets?.playerModelFile) {
+    formData.append('player_model_file', params.assets.playerModelFile)
+  }
+
+  if (params.assets?.ballModelFile) {
+    formData.append('ball_model_file', params.assets.ballModelFile)
+  }
+
   return formData
 }
 
 export async function createComputerVisionJob(params: {
   source: VideoSourceInput
   config: ComputerVisionConfig
+  assets?: ComputerVisionModelAssets
 }): Promise<ComputerVisionJob> {
   const response = await fetch(`${API_BASE_URL}/api/v1/computer-vision/jobs`, {
     method: 'POST',

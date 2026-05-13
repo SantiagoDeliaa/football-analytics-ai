@@ -28,7 +28,7 @@ type Action =
   | { type: 'setPlayer'; player: string }
   | { type: 'setResult'; result?: EventDataResult }
 
-const initialState: EventDataState = {
+export const initialEventDataState: EventDataState = {
   provider: 'StatsBomb Open Data',
   competitions: [],
   matches: [],
@@ -36,7 +36,7 @@ const initialState: EventDataState = {
   selectedPlayer: 'Todos',
 }
 
-function reducer(state: EventDataState, action: Action): EventDataState {
+export function eventDataReducer(state: EventDataState, action: Action): EventDataState {
   switch (action.type) {
     case 'setProvider':
       return {
@@ -53,13 +53,38 @@ function reducer(state: EventDataState, action: Action): EventDataState {
     case 'setCompetitions':
       return { ...state, competitions: action.competitions }
     case 'setSelectedCompetition':
-      return { ...state, selectedCompetition: action.competition, selectedMatch: undefined }
+      return {
+        ...state,
+        selectedCompetition: action.competition,
+        selectedMatch: undefined,
+        selectedTeam: 'Todos',
+        selectedPlayer: 'Todos',
+        result: undefined,
+      }
     case 'setMatches':
       return { ...state, matches: action.matches }
-    case 'setSelectedMatch':
-      return { ...state, selectedMatch: action.match, result: undefined }
+    case 'setSelectedMatch': {
+      const nextMatchId =
+        action.match && action.match.match_id !== undefined && action.match.match_id !== null
+          ? `${action.match.match_id}`
+          : undefined
+      const currentResultId = state.result?.match_id ? `${state.result.match_id}` : undefined
+      const shouldPreserveCurrentResult = nextMatchId && currentResultId && nextMatchId === currentResultId
+
+      if (shouldPreserveCurrentResult) {
+        return { ...state, selectedMatch: action.match }
+      }
+
+      return {
+        ...state,
+        selectedMatch: action.match,
+        selectedTeam: 'Todos',
+        selectedPlayer: 'Todos',
+        result: undefined,
+      }
+    }
     case 'setTeam':
-      return { ...state, selectedTeam: action.team }
+      return { ...state, selectedTeam: action.team, selectedPlayer: 'Todos' }
     case 'setPlayer':
       return { ...state, selectedPlayer: action.player }
     case 'setResult':
@@ -77,7 +102,7 @@ type EventDataContextValue = {
 const EventDataContext = createContext<EventDataContextValue | null>(null)
 
 export function EventDataProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+  const [state, dispatch] = useReducer(eventDataReducer, initialEventDataState)
   const value = useMemo(() => ({ state, dispatch }), [state])
   return <EventDataContext.Provider value={value}>{children}</EventDataContext.Provider>
 }

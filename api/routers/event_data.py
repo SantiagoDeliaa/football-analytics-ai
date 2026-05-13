@@ -2,14 +2,27 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, UploadFile
 
+from api.schemas import ApiFootballCountryResponse
+from api.schemas import ApiFootballLeagueResponse
 from api.schemas import CompetitionResponse
+from api.schemas import CoachAnswerResponse
+from api.schemas import CoachConfigStatusResponse
+from api.schemas import CoachDiagnosisResponse
 from api.schemas import EventDataAnalyzeRequest
+from api.schemas import EventDataCoachQuestionRequest
+from api.schemas import EventDataCoachRequest
 from api.schemas import EventDataResultResponse
 from api.schemas import MatchResponse
 from api.schemas import ProcessedMatchSummaryResponse
 from api.schemas import PdfAnalysisResponse
+from api.services.event_data_service import answer_ai_coach_from_payload
 from api.services.event_data_service import analyze_match
 from api.services.event_data_service import analyze_pdf_report
+from api.services.event_data_service import generate_ai_coach_diagnosis
+from api.services.event_data_service import get_ai_coach_status
+from api.services.event_data_service import list_api_football_countries
+from api.services.event_data_service import list_api_football_fixtures
+from api.services.event_data_service import list_api_football_leagues
 from api.services.event_data_service import list_processed_history
 from api.services.event_data_service import list_competitions
 from api.services.event_data_service import list_matches
@@ -33,6 +46,25 @@ def get_matches(
     return list_matches(competition_id=competition_id, season_id=season_id, provider=provider)
 
 
+@router.get("/api-football/countries", response_model=list[ApiFootballCountryResponse])
+def get_api_football_countries_endpoint() -> list[dict]:
+    return list_api_football_countries()
+
+
+@router.get("/api-football/leagues", response_model=list[ApiFootballLeagueResponse])
+def get_api_football_leagues_endpoint(
+    country: str,
+    season: int | str | None = None,
+    search: str | None = None,
+) -> list[dict]:
+    return list_api_football_leagues(country=country, season=season, search=search)
+
+
+@router.get("/api-football/fixtures", response_model=list[MatchResponse])
+def get_api_football_fixtures_endpoint(league_id: int | str, season: int | str) -> list[dict]:
+    return list_api_football_fixtures(league_id=league_id, season=season)
+
+
 @router.post("/analyze", response_model=EventDataResultResponse)
 def post_analyze(payload: EventDataAnalyzeRequest) -> dict:
     return analyze_match(payload.model_dump())
@@ -51,3 +83,18 @@ def get_history(limit: int = 20) -> list[dict]:
 @router.get("/history/{provider}/{match_id}", response_model=EventDataResultResponse)
 def get_history_entry(provider: str, match_id: str) -> dict:
     return load_processed_history_entry(provider=provider, match_id=match_id)
+
+
+@router.get("/coach/status", response_model=CoachConfigStatusResponse)
+def get_coach_status() -> dict:
+    return get_ai_coach_status()
+
+
+@router.post("/coach/diagnosis", response_model=CoachDiagnosisResponse)
+def post_coach_diagnosis(payload: EventDataCoachRequest) -> dict:
+    return generate_ai_coach_diagnosis(payload.model_dump())
+
+
+@router.post("/coach/question", response_model=CoachAnswerResponse)
+def post_coach_question(payload: EventDataCoachQuestionRequest) -> dict:
+    return answer_ai_coach_from_payload(payload.model_dump())

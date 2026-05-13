@@ -1,20 +1,28 @@
-import type { ComputerVisionConfig } from '../../types/computerVision'
+import type { ComputerVisionConfig, ComputerVisionModelAssets } from '../../types/computerVision'
 
 interface ProcessingConfigPanelProps {
+  assets: ComputerVisionModelAssets
   config: ComputerVisionConfig
   loading: boolean
+  onAssetsChange: (next: ComputerVisionModelAssets) => void
   onChange: (next: ComputerVisionConfig) => void
   onSubmit: () => void
 }
 
 export function ProcessingConfigPanel({
+  assets,
   config,
   loading,
+  onAssetsChange,
   onChange,
   onSubmit,
 }: ProcessingConfigPanelProps) {
   function patch<K extends keyof ComputerVisionConfig>(key: K, value: ComputerVisionConfig[K]) {
     onChange({ ...config, [key]: value })
+  }
+
+  function patchAsset<K extends keyof ComputerVisionModelAssets>(key: K, value: ComputerVisionModelAssets[K]) {
+    onAssetsChange({ ...assets, [key]: value })
   }
 
   return (
@@ -28,14 +36,77 @@ export function ProcessingConfigPanel({
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <SelectField
+          label="Modelo de jugadores"
+          onChange={(value) => patch('player_model_source', value as ComputerVisionConfig['player_model_source'])}
+          options={[
+            { label: 'YOLOv8 genérico', value: 'builtin' },
+            { label: 'Modelo custom (.pt)', value: 'custom' },
+          ]}
+          value={config.player_model_source}
+        />
+        <SelectField
           label="Modelo YOLOv8"
           onChange={(value) => patch('model_name', value as ComputerVisionConfig['model_name'])}
           options={[
             { label: 'yolov8n.pt', value: 'yolov8n.pt' },
             { label: 'yolov8s.pt', value: 'yolov8s.pt' },
+            { label: 'yolov8m.pt', value: 'yolov8m.pt' },
+            { label: 'yolov8l.pt', value: 'yolov8l.pt' },
+            { label: 'yolov8x.pt', value: 'yolov8x.pt' },
           ]}
           value={config.model_name}
         />
+        <SelectField
+          label="Modelo de pelota"
+          onChange={(value) => patch('ball_model_source', value as ComputerVisionConfig['ball_model_source'])}
+          options={[
+            { label: 'Heurística sports ball', value: 'heuristic' },
+            { label: 'Modelo custom (.pt)', value: 'custom' },
+          ]}
+          value={config.ball_model_source}
+        />
+        <SelectField
+          label="Modelo de campo"
+          onChange={(value) => patch('pitch_source', value as ComputerVisionConfig['pitch_source'])}
+          options={[
+            { label: 'Homography (recomendado)', value: 'homography' },
+            { label: 'Soccana keypoint', value: 'soccana' },
+            { label: 'Full field approx', value: 'full_field_approx' },
+          ]}
+          value={config.pitch_source}
+        />
+      </div>
+
+      {(config.player_model_source === 'custom' || config.ball_model_source === 'custom') ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          {config.player_model_source === 'custom' ? (
+            <FileField
+              file={assets.playerModelFile}
+              label="Modelo jugadores (.pt)"
+              onChange={(file) => patchAsset('playerModelFile', file)}
+            />
+          ) : (
+            <InfoCard
+              label="Modelo jugadores"
+              text="Usa el preset YOLOv8 seleccionado arriba para la detección de jugadores."
+            />
+          )}
+          {config.ball_model_source === 'custom' ? (
+            <FileField
+              file={assets.ballModelFile}
+              label="Modelo pelota (.pt)"
+              onChange={(file) => patchAsset('ballModelFile', file)}
+            />
+          ) : (
+            <InfoCard
+              label="Modelo pelota"
+              text="Se mantiene la heurística basada en la clase sports ball."
+            />
+          )}
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <RangeField
           label="Umbral de confianza"
           max={0.9}
@@ -148,6 +219,40 @@ export function ProcessingConfigPanel({
         {loading ? 'Procesando video...' : 'Procesar video'}
       </button>
     </section>
+  )
+}
+
+function FileField({
+  label,
+  file,
+  onChange,
+}: {
+  label: string
+  file?: File
+  onChange: (file?: File) => void
+}) {
+  return (
+    <label className="text-sm text-slate-200">
+      {label}
+      <input
+        accept=".pt"
+        className="mt-1 block w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-slate-200"
+        onChange={(event) => onChange(event.target.files?.[0])}
+        type="file"
+      />
+      <span className="mt-2 block text-xs text-slate-400">
+        {file ? `Archivo listo: ${file.name}` : 'Todavía no se cargó ningún archivo.'}
+      </span>
+    </label>
+  )
+}
+
+function InfoCard({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-3">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-sm text-slate-300">{text}</p>
+    </div>
   )
 }
 

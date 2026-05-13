@@ -7,9 +7,14 @@ import type { EventDataResult } from '../types/eventData'
 
 function buildResult(matchId: string): EventDataResult {
   return {
+    provider: 'StatsBomb Open Data',
     match_id: matchId,
     competition_name: 'Liga',
+    season_name: '2025',
     match_label: `Equipo A vs Equipo B ${matchId}`,
+    home_team: 'Equipo A',
+    away_team: 'Equipo B',
+    match_date: '2025-01-01',
     canonical_events: [],
     metrics: {
       total_events: 100,

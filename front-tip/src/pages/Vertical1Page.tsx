@@ -19,6 +19,7 @@ import { createComputerVisionJob, getComputerVisionJob } from '../services/compu
 import type {
   ComputerVisionConfig,
   ComputerVisionJob,
+  ComputerVisionModelAssets,
   ComputerVisionResult,
   VideoSourceInput,
 } from '../types/computerVision'
@@ -43,6 +44,9 @@ const initialSource: VideoSourceInput = {
 
 const initialConfig: ComputerVisionConfig = {
   model_name: 'yolov8n.pt',
+  player_model_source: 'builtin',
+  ball_model_source: 'heuristic',
+  pitch_source: 'homography',
   confidence: 0.25,
   image_size: 640,
   only_person: true,
@@ -74,6 +78,7 @@ export function Vertical1Page() {
   const [activeTab, setActiveTab] = useState<Vertical1Tab>('video')
   const [source, setSource] = useState<VideoSourceInput>(initialSource)
   const [config, setConfig] = useState<ComputerVisionConfig>(initialConfig)
+  const [assets, setAssets] = useState<ComputerVisionModelAssets>({})
   const [validationError, setValidationError] = useState<string>()
   const [job, setJob] = useState<ComputerVisionJob>()
   const [result, setResult] = useState<ComputerVisionResult>()
@@ -164,10 +169,26 @@ export function Vertical1Page() {
     return parsed.success ? undefined : parsed.error.issues[0]?.message
   }
 
+  function validateAdvancedAssets() {
+    if (config.player_model_source === 'custom' && !assets.playerModelFile) {
+      return 'Debés subir un modelo custom de jugadores (.pt).'
+    }
+    if (config.ball_model_source === 'custom' && !assets.ballModelFile) {
+      return 'Debés subir un modelo custom de pelota (.pt).'
+    }
+    return undefined
+  }
+
   async function handleSubmit() {
     const nextError = validateSource()
     if (nextError) {
       setValidationError(nextError)
+      return
+    }
+
+    const advancedError = validateAdvancedAssets()
+    if (advancedError) {
+      setValidationError(advancedError)
       return
     }
 
@@ -179,6 +200,7 @@ export function Vertical1Page() {
       createComputerVisionJob({
         source,
         config,
+        assets,
       }),
     )
 
@@ -216,8 +238,10 @@ export function Vertical1Page() {
           source={source}
         />
         <ProcessingConfigPanel
+          assets={assets}
           config={config}
           loading={busy}
+          onAssetsChange={setAssets}
           onChange={setConfig}
           onSubmit={handleSubmit}
         />

@@ -5,6 +5,25 @@ export interface Competition {
   season_id: number
   competition_name: string
   season_name: string
+  country_name?: string
+  display_name: string
+}
+
+export interface ApiFootballCountry {
+  name: string
+  code: string
+  flag: string
+  display_name: string
+}
+
+export interface ApiFootballLeague {
+  league_id: number
+  league_name: string
+  country_name: string
+  type: string
+  logo: string
+  seasons: number[]
+  current_season?: number | null
   display_name: string
 }
 
@@ -64,13 +83,19 @@ export interface IngestionStatus {
 }
 
 export interface EventDataResult {
+  provider: ProviderOption
   match_id: string
   competition_name: string
+  season_name: string
   match_label: string
+  home_team: string
+  away_team: string
+  match_date: string
   canonical_events: CanonicalEvent[]
   metrics: MatchMetrics
   insights: string[]
   raw_events_count: number
+  raw_payload?: unknown
   used_fallback_events: boolean
   events_status_message: string
 }
@@ -113,4 +138,51 @@ export interface ProcessedHistoryMatch {
   match_date: string
   created_at: string
   updated_at: string
+}
+
+export interface CoachConversationMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface CoachRequest {
+  provider: ProviderOption
+  matchId: string | number
+  team?: string
+  player?: string
+  competitionName?: string
+  seasonName?: string
+  matchLabel?: string
+  homeTeam?: string
+  awayTeam?: string
+  matchDate?: string
+}
+
+export interface CoachQuestionRequest extends CoachRequest {
+  question: string
+  conversationHistory?: CoachConversationMessage[]
+}
+
+export interface CoachConfigStatus {
+  configured: boolean
+  api_key_configured: boolean
+  model_configured: boolean
+  base_url_configured: boolean
+  model: string
+  base_url: string
+  message: string
+}
+
+export interface CoachDiagnosisResult {
+  ok: boolean
+  diagnosis: string
+  error: string
+  suggested_questions: string[]
+}
+
+export interface CoachAnswerResult {
+  ok: boolean
+  answer: string
+  error: string
+  suggested_questions: string[]
 }

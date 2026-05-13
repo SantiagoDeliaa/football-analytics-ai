@@ -4,6 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile.api
     container_name: sport-analytics-backend
+    environment:
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY:-}
+      AI_COACH_API_KEY: ${AI_COACH_API_KEY:-}
+      AI_COACH_MODEL: ${AI_COACH_MODEL:-}
+      AI_COACH_BASE_URL: ${AI_COACH_BASE_URL:-}
     ports:
       - "8000:8000"
     volumes:
@@ -20,6 +25,7 @@ services:
     container_name: sport-analytics-frontend
     environment:
       VITE_API_BASE_URL: http://localhost:8000
+      VITE_APP_ENV: production
     depends_on:
       - backend
     ports:

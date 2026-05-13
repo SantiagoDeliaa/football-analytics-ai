@@ -41,6 +41,10 @@ export function ProcessedHistoryPanel({
           {entries.map((entry) => {
             const isActive = entry.match_id === activeMatchId
             const matchLabel = [entry.home_team, entry.away_team].filter(Boolean).join(' vs ')
+            const buttonLabel = isActive ? 'Partido activo' : 'Cargar backend'
+            const accessibleButtonLabel = isActive
+              ? `${matchLabel || `Match ${entry.match_id}`} activo`
+              : `Cargar ${matchLabel || `Match ${entry.match_id}`} desde backend`
 
             return (
               <article
@@ -65,11 +69,12 @@ export function ProcessedHistoryPanel({
                   </div>
 
                   <button
+                    aria-label={accessibleButtonLabel}
                     className="rounded-md border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-sky-400 hover:bg-slate-800"
                     onClick={() => onLoad(entry.provider, entry.match_id)}
                     type="button"
                   >
-                    {isActive ? 'Partido activo' : 'Cargar backend'}
+                    {buttonLabel}
                   </button>
                 </div>
               </article>

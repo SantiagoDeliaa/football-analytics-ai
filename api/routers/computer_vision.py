@@ -21,6 +21,8 @@ def post_analyze(
     source_mode: str = Form(...),
     config: str = Form(...),
     file: UploadFile | None = File(default=None),
+    player_model_file: UploadFile | None = File(default=None),
+    ball_model_file: UploadFile | None = File(default=None),
     soccernet_path: str | None = Form(default=None),
 ) -> dict:
     try:
@@ -35,6 +37,8 @@ def post_analyze(
         source_mode=source_mode,
         config=parsed_config,
         upload_file=file,
+        player_model_file=player_model_file,
+        ball_model_file=ball_model_file,
         soccernet_path=soccernet_path,
     )
 
@@ -44,6 +48,8 @@ def post_job(
     source_mode: str = Form(...),
     config: str = Form(...),
     file: UploadFile | None = File(default=None),
+    player_model_file: UploadFile | None = File(default=None),
+    ball_model_file: UploadFile | None = File(default=None),
     soccernet_path: str | None = Form(default=None),
 ) -> dict:
     try:
@@ -58,6 +64,8 @@ def post_job(
         source_mode=source_mode,
         config=parsed_config,
         upload_file=file,
+        player_model_file=player_model_file,
+        ball_model_file=ball_model_file,
         soccernet_path=soccernet_path,
     )
 

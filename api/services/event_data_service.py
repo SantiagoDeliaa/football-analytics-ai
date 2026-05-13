@@ -5,7 +5,13 @@ from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
 
+from src.services.ai_coach import answer_coach_question
+from src.services.ai_coach import build_match_context
+from src.services.ai_coach import generate_tactical_diagnosis
+from src.services.ai_coach import get_ai_coach_config_status
+from src.services.ai_coach import get_suggested_questions
 from src.services.api_football_ingestion import get_api_football_api_key
+from src.services.api_football_ingestion import get_api_football_countries
 from src.services.api_football_ingestion import get_api_football_fixture_events
 from src.services.api_football_ingestion import get_api_football_fixture_lineups
 from src.services.api_football_ingestion import get_api_football_fixture_players
@@ -34,6 +40,50 @@ STATSBOMB_PROVIDER = "StatsBomb Open Data"
 API_FOOTBALL_PROVIDER = "API-Football"
 SUPPORTED_EVENT_PROVIDERS = {STATSBOMB_PROVIDER, API_FOOTBALL_PROVIDER}
 DEFAULT_API_FOOTBALL_COUNTRY = "Argentina"
+
+
+def list_api_football_countries() -> list[dict[str, Any]]:
+    _ensure_api_football_configured()
+    countries = get_api_football_countries()
+    _raise_for_api_football_error_if_needed(countries)
+    return countries
+
+
+def list_api_football_leagues(
+    country: str,
+    season: int | str | None = None,
+    search: str | None = None,
+) -> list[dict[str, Any]]:
+    _ensure_api_football_configured()
+    leagues = get_api_football_leagues(country=country, season=season, search=search)
+    _raise_for_api_football_error_if_needed(leagues)
+
+    normalized: list[dict[str, Any]] = []
+    for league in leagues:
+        normalized.append(
+            {
+                "league_id": int(league.get("league_id") or 0),
+                "league_name": str(league.get("league_name") or "Liga"),
+                "country_name": str(league.get("country_name") or country or DEFAULT_API_FOOTBALL_COUNTRY),
+                "type": str(league.get("type") or ""),
+                "logo": str(league.get("logo") or ""),
+                "seasons": [
+                    int(season_item.get("year"))
+                    for season_item in league.get("seasons", []) or []
+                    if season_item.get("year") is not None
+                ],
+                "current_season": _resolve_api_football_season(league),
+                "display_name": str(league.get("display_name") or league.get("league_name") or "Liga"),
+            }
+        )
+    return normalized
+
+
+def list_api_football_fixtures(league_id: int | str, season: int | str) -> list[dict[str, Any]]:
+    _ensure_api_football_configured()
+    fixtures = get_api_football_fixtures(league_id=league_id, season=season)
+    _raise_for_api_football_error_if_needed(fixtures)
+    return fixtures
 
 
 def list_competitions(provider: str = STATSBOMB_PROVIDER) -> list[dict[str, Any]]:
@@ -149,13 +199,19 @@ def _analyze_statsbomb_match(
     default_match_label = payload.get("match_label") or _build_match_label(metadata, match_id)
 
     return {
+        "provider": STATSBOMB_PROVIDER,
         "match_id": match_id,
         "competition_name": str(metadata["competition_name"]),
+        "season_name": str(metadata["season_name"]),
         "match_label": str(default_match_label),
+        "home_team": str(metadata["home_team"]),
+        "away_team": str(metadata["away_team"]),
+        "match_date": str(metadata["match_date"]),
         "canonical_events": canonical_events,
         "metrics": metrics,
         "insights": insights,
         "raw_events_count": len(raw_events),
+        "raw_payload": raw_events,
         "used_fallback_events": used_fallback_events,
         "events_status_message": str(ingestion_status.get("message") or ""),
     }
@@ -211,13 +267,19 @@ def _analyze_api_football_match(
     status_payload = get_api_football_status()
 
     return {
+        "provider": API_FOOTBALL_PROVIDER,
         "match_id": match_id,
         "competition_name": str(metadata["competition_name"]),
+        "season_name": str(metadata["season_name"]),
         "match_label": str(default_match_label),
+        "home_team": str(metadata["home_team"]),
+        "away_team": str(metadata["away_team"]),
+        "match_date": str(metadata["match_date"]),
         "canonical_events": canonical_events,
         "metrics": metrics,
         "insights": insights,
         "raw_events_count": len(raw_events),
+        "raw_payload": raw_payload,
         "used_fallback_events": False,
         "events_status_message": str(status_payload.get("message") or ""),
     }
@@ -259,15 +321,61 @@ def load_processed_history_entry(provider: str, match_id: str) -> dict[str, Any]
     raw_events_count = len(raw_events.get("events", [])) if isinstance(raw_events, dict) else len(raw_events)
 
     return {
+        "provider": str(provider),
         "match_id": str(match_id),
         "competition_name": str(metadata.get("competition_name") or provider or STATSBOMB_PROVIDER),
+        "season_name": str(metadata.get("season_name") or ""),
         "match_label": _build_match_label(metadata, str(match_id)),
+        "home_team": str(metadata.get("home_team") or ""),
+        "away_team": str(metadata.get("away_team") or ""),
+        "match_date": str(metadata.get("match_date") or ""),
         "canonical_events": canonical_events,
         "metrics": metrics,
         "insights": insights,
         "raw_events_count": raw_events_count,
+        "raw_payload": raw_events,
         "used_fallback_events": False,
         "events_status_message": "",
+    }
+
+
+def get_ai_coach_status() -> dict[str, Any]:
+    status_payload = get_ai_coach_config_status()
+    return {
+        "configured": bool(status_payload.get("configured")),
+        "api_key_configured": bool(status_payload.get("api_key_configured")),
+        "model_configured": bool(status_payload.get("model_configured")),
+        "base_url_configured": bool(status_payload.get("base_url_configured")),
+        "model": str(status_payload.get("model") or ""),
+        "base_url": str(status_payload.get("base_url") or ""),
+        "message": str(status_payload.get("message") or ""),
+    }
+
+
+def generate_ai_coach_diagnosis(payload: dict[str, Any]) -> dict[str, Any]:
+    match_context = _build_ai_coach_match_context(payload)
+    response = generate_tactical_diagnosis(match_context)
+    return {
+        "ok": bool(response.get("ok")),
+        "diagnosis": str(response.get("diagnosis") or ""),
+        "error": str(response.get("error") or ""),
+        "suggested_questions": get_suggested_questions(match_context),
+    }
+
+
+def answer_ai_coach_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    match_context = _build_ai_coach_match_context(payload)
+    conversation_history = _normalize_conversation_history(payload.get("conversation_history"))
+    response = answer_coach_question(
+        match_context,
+        str(payload.get("question") or ""),
+        conversation_history=conversation_history,
+    )
+    return {
+        "ok": bool(response.get("ok")),
+        "answer": str(response.get("answer") or ""),
+        "error": str(response.get("error") or ""),
+        "suggested_questions": get_suggested_questions(match_context),
     }
 
 
@@ -378,6 +486,84 @@ def _build_metadata(payload: dict[str, Any], provider: str) -> dict[str, Any]:
         "away_team": payload.get("away_team") or "",
         "match_date": payload.get("match_date") or "",
     }
+
+
+def _build_ai_coach_match_context(payload: dict[str, Any]) -> dict[str, Any]:
+    analysis = analyze_match(payload)
+    provider = analysis.get("provider") or payload.get("provider")
+    provider_capabilities = _build_provider_capabilities_from_analysis(
+        provider=provider,
+        canonical_events=analysis.get("canonical_events", []) or [],
+        metrics=analysis.get("metrics", {}) or {},
+    )
+    return build_match_context(
+        provider=provider,
+        match_metadata={
+            "provider": provider,
+            "match_id": analysis.get("match_id"),
+            "competition_name": analysis.get("competition_name"),
+            "season_name": analysis.get("season_name"),
+            "home_team": analysis.get("home_team"),
+            "away_team": analysis.get("away_team"),
+            "match_date": analysis.get("match_date"),
+        },
+        canonical_events=analysis.get("canonical_events", []) or [],
+        metrics=analysis.get("metrics", {}) or {},
+        insights=analysis.get("insights", []) or [],
+        selected_team=_normalize_filter(payload.get("team")),
+        selected_player=_normalize_filter(payload.get("player")),
+        provider_capabilities=provider_capabilities,
+        raw_summary=None,
+    )
+
+
+def _build_provider_capabilities_from_analysis(
+    provider: Any,
+    canonical_events: list[dict[str, Any]],
+    metrics: dict[str, Any],
+) -> dict[str, bool]:
+    provider_key = str(provider or "").strip().lower()
+    has_coordinates = any(
+        isinstance(event.get("x"), (int, float)) and isinstance(event.get("y"), (int, float))
+        for event in canonical_events
+    )
+    has_xg = any((event.get("xG") or 0) not in {0, 0.0, None} for event in canonical_events)
+    has_xg = has_xg or bool((metrics or {}).get("total_xg"))
+
+    if provider_key == "api-football":
+        return {
+            "has_event_coordinates": has_coordinates,
+            "has_lineups": True,
+            "has_team_stats": True,
+            "has_player_stats": True,
+            "has_xg": has_xg,
+            "has_event_timeline": bool(canonical_events),
+        }
+
+    return {
+        "has_event_coordinates": has_coordinates,
+        "has_lineups": False,
+        "has_team_stats": False,
+        "has_player_stats": False,
+        "has_xg": has_xg,
+        "has_event_timeline": bool(canonical_events),
+    }
+
+
+def _normalize_conversation_history(history: Any) -> list[dict[str, str]]:
+    if not isinstance(history, list):
+        return []
+
+    normalized: list[dict[str, str]] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if role not in {"user", "assistant"} or not content:
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized[-6:]
 
 
 def _resolve_api_football_season(league: dict[str, Any]) -> int | None:

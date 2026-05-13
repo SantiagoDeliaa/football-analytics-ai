@@ -12,14 +12,20 @@ import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
 import { Tabs } from '../components/common/Tabs'
 import { ApiFiltersPanel } from '../components/vertical2/ApiFiltersPanel'
+import { AiCoachPanel } from '../components/vertical2/AiCoachPanel'
 import { CanonicalPreview } from '../components/vertical2/CanonicalPreview'
 import { EventHistoryPanel } from '../components/vertical2/EventHistoryPanel'
+import { HistoryMatchHint } from '../components/vertical2/HistoryMatchHint'
 import { InsightsList } from '../components/vertical2/InsightsList'
 import { MatchSummary } from '../components/vertical2/MatchSummary'
 import { ProcessedHistoryPanel } from '../components/vertical2/ProcessedHistoryPanel'
+import { ProviderDebugPanel } from '../components/vertical2/ProviderDebugPanel'
 import { PdfUploadForm } from '../components/vertical2/PdfUploadForm'
 import { useAsync } from '../hooks/useAsync'
 import {
+  fetchApiFootballCountries,
+  fetchApiFootballFixtures,
+  fetchApiFootballLeagues,
   fetchCompetitions,
   fetchMatches,
   fetchProcessedHistory,
@@ -32,6 +38,8 @@ import {
   saveEventHistoryEntry,
 } from '../services/eventHistoryStorage'
 import type {
+  ApiFootballCountry,
+  ApiFootballLeague,
   EventHistoryEntry,
   PdfAnalysisResult,
   ProcessedHistoryMatch,
@@ -73,17 +81,48 @@ const PdfTacticalBoard = lazy(async () => {
 
 type ActiveTab = 'pdf' | 'api'
 
+function inferTeamsFromMatch(selectedMatch?: { home_team?: string; away_team?: string; display_name?: string }) {
+  const directTeams = [selectedMatch?.home_team, selectedMatch?.away_team].filter(
+    (team): team is string => Boolean(team?.trim()),
+  )
+
+  if (directTeams.length > 0) {
+    return directTeams
+  }
+
+  const label = String(selectedMatch?.display_name ?? '').trim()
+  if (!label) {
+    return []
+  }
+
+  const [teamsChunk] = label.split(' — ')
+  const inferredTeams = teamsChunk
+    .split(' vs ')
+    .map((team) => team.trim())
+    .filter(Boolean)
+
+  return inferredTeams.length >= 2 ? inferredTeams.slice(0, 2) : []
+}
+
 export function Vertical2Page() {
   const navigate = useNavigate()
   const params = useParams()
   const [activeTab, setActiveTab] = useState<ActiveTab>('api')
   const [fallbackWarning, setFallbackWarning] = useState<string>()
+  const [apiFootballCountries, setApiFootballCountries] = useState<ApiFootballCountry[]>([])
+  const [apiFootballLeagues, setApiFootballLeagues] = useState<ApiFootballLeague[]>([])
+  const [apiFootballSelectedCountry, setApiFootballSelectedCountry] = useState('')
+  const [apiFootballSelectedLeagueId, setApiFootballSelectedLeagueId] = useState('')
+  const [apiFootballSelectedSeason, setApiFootballSelectedSeason] = useState('')
   const [pdfResult, setPdfResult] = useState<PdfAnalysisResult>()
   const [pdfError, setPdfError] = useState<string>()
   const [historyEntries, setHistoryEntries] = useState<EventHistoryEntry[]>(() => listEventHistoryEntries())
   const [processedHistoryEntries, setProcessedHistoryEntries] = useState<ProcessedHistoryMatch[]>([])
   const { state, dispatch } = useEventDataContext()
   const competitionsTask = useAsync<Awaited<ReturnType<typeof fetchCompetitions>>>()
+  const apiFootballCountriesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballCountries>>>()
+  const apiFootballLeaguesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballLeagues>>>()
+  const apiFootballFixturesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballFixtures>>>()
   const matchesTask = useAsync<Awaited<ReturnType<typeof fetchMatches>>>()
   const apiTask = useAsync<Awaited<ReturnType<typeof loadEventData>>>()
   const pdfTask = useAsync<Awaited<ReturnType<typeof uploadPdfReport>>>()
@@ -91,6 +130,10 @@ export function Vertical2Page() {
   const historyEntryTask = useAsync<Awaited<ReturnType<typeof loadProcessedHistoryEntry>>>()
 
   useEffect(() => {
+    if (state.provider !== 'StatsBomb Open Data') {
+      return
+    }
+
     void competitionsTask.run(() => fetchCompetitions(state.provider)).then((payload) => {
       if (!payload) return
       dispatch({ type: 'setCompetitions', competitions: payload.competitions })
@@ -105,6 +148,79 @@ export function Vertical2Page() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.provider, dispatch])
+
+  useEffect(() => {
+    if (state.provider !== 'API-Football') {
+      return
+    }
+
+    void apiFootballCountriesTask.run(() => fetchApiFootballCountries()).then((payload) => {
+      if (!payload) {
+        return
+      }
+
+      setApiFootballCountries(payload.countries)
+      setFallbackWarning(payload.status.source === 'api' ? undefined : payload.status.message)
+      setApiFootballSelectedCountry((currentCountry) => {
+        if (currentCountry && payload.countries.some((country) => country.name === currentCountry)) {
+          return currentCountry
+        }
+        return payload.countries[0]?.name ?? ''
+      })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.provider])
+
+  useEffect(() => {
+    if (state.provider !== 'API-Football') {
+      return
+    }
+    if (!apiFootballSelectedCountry) {
+      setApiFootballLeagues([])
+      setApiFootballSelectedLeagueId('')
+      setApiFootballSelectedSeason('')
+      return
+    }
+
+    void apiFootballLeaguesTask
+      .run(() => fetchApiFootballLeagues({ country: apiFootballSelectedCountry }))
+      .then((payload) => {
+        if (!payload) {
+          return
+        }
+
+        setApiFootballLeagues(payload.leagues)
+        setFallbackWarning(payload.status.source === 'api' ? undefined : payload.status.message)
+        setApiFootballSelectedLeagueId((currentLeagueId) => {
+          if (currentLeagueId && payload.leagues.some((league) => `${league.league_id}` === currentLeagueId)) {
+            return currentLeagueId
+          }
+          return payload.leagues[0] ? `${payload.leagues[0].league_id}` : ''
+        })
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.provider, apiFootballSelectedCountry])
+
+  useEffect(() => {
+    if (state.provider !== 'API-Football') {
+      return
+    }
+
+    const selectedLeague = apiFootballLeagues.find(
+      (league) => `${league.league_id}` === apiFootballSelectedLeagueId,
+    )
+    const nextSeasonOptions = selectedLeague?.seasons ?? []
+
+    setApiFootballSelectedSeason((currentSeason) => {
+      if (currentSeason && nextSeasonOptions.includes(Number(currentSeason))) {
+        return currentSeason
+      }
+      if (selectedLeague?.current_season) {
+        return `${selectedLeague.current_season}`
+      }
+      return nextSeasonOptions[0] ? `${nextSeasonOptions[0]}` : ''
+    })
+  }, [apiFootballLeagues, apiFootballSelectedLeagueId, state.provider])
 
   useEffect(() => {
     void processedHistoryTask.run(() => fetchProcessedHistory()).then((payload) => {
@@ -137,6 +253,9 @@ export function Vertical2Page() {
   }, [state.result, state.selectedPlayer])
 
   useEffect(() => {
+    if (state.provider !== 'StatsBomb Open Data') {
+      return
+    }
     if (!state.selectedCompetition) return
     void matchesTask
       .run(() =>
@@ -164,14 +283,36 @@ export function Vertical2Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.provider, state.selectedCompetition, params.matchId, dispatch])
 
+  const selectedApiFootballLeague = useMemo(
+    () => apiFootballLeagues.find((league) => `${league.league_id}` === apiFootballSelectedLeagueId),
+    [apiFootballLeagues, apiFootballSelectedLeagueId],
+  )
+  const selectedMatchKey = state.selectedMatch?.match_id ? `${state.selectedMatch.match_id}` : undefined
+
+  const currentResultMatchesSelection =
+    !!state.result &&
+    !!state.selectedMatch &&
+    `${state.result.match_id}` === `${state.selectedMatch.match_id}`
+
   const teamOptions = useMemo(
-    () => ['Todos', ...extractTeams(state.result?.canonical_events ?? [])],
-    [state.result?.canonical_events],
+    () => {
+      if (currentResultMatchesSelection) {
+        return ['Todos', ...extractTeams(state.result?.canonical_events ?? [])]
+      }
+
+      const matchTeams = inferTeamsFromMatch(state.selectedMatch)
+
+      return ['Todos', ...new Set(matchTeams)]
+    },
+    [currentResultMatchesSelection, state.result?.canonical_events, state.selectedMatch],
   )
 
   const playerOptions = useMemo(
-    () => ['Todos', ...extractPlayers(state.result?.canonical_events ?? [], state.selectedTeam)],
-    [state.result?.canonical_events, state.selectedTeam],
+    () =>
+      currentResultMatchesSelection
+        ? ['Todos', ...extractPlayers(state.result?.canonical_events ?? [], state.selectedTeam)]
+        : ['Todos'],
+    [currentResultMatchesSelection, state.result?.canonical_events, state.selectedTeam],
   )
 
   const filteredEvents = useMemo(
@@ -241,8 +382,30 @@ export function Vertical2Page() {
     return 'API'
   }, [apiTask.data?.match_id, historyEntries, historyEntryTask.data?.match_id, state.result])
 
+  const matchingLocalHistoryEntry = useMemo(() => {
+    if (!selectedMatchKey) {
+      return undefined
+    }
+    return historyEntries.find(
+      (entry) => entry.provider === state.provider && entry.result.match_id === selectedMatchKey,
+    )
+  }, [historyEntries, selectedMatchKey, state.provider])
+
+  const matchingBackendHistoryEntry = useMemo(() => {
+    if (!selectedMatchKey) {
+      return undefined
+    }
+    return processedHistoryEntries.find(
+      (entry) => entry.provider === state.provider && entry.match_id === selectedMatchKey,
+    )
+  }, [processedHistoryEntries, selectedMatchKey, state.provider])
+
   useEffect(() => {
     if (!params.matchId) {
+      return
+    }
+
+    if (state.selectedMatch && `${state.selectedMatch.match_id}` !== params.matchId) {
       return
     }
 
@@ -254,7 +417,37 @@ export function Vertical2Page() {
     dispatch({ type: 'setResult', result: historyEntry.result })
     dispatch({ type: 'setTeam', team: historyEntry.selection.team })
     dispatch({ type: 'setPlayer', player: historyEntry.selection.player })
-  }, [dispatch, historyEntries, params.matchId, state.result?.match_id])
+  }, [dispatch, historyEntries, params.matchId, state.result?.match_id, state.selectedMatch])
+
+  function resetApiSelectionState() {
+    dispatch({ type: 'setMatches', matches: [] })
+    dispatch({ type: 'setSelectedMatch', match: undefined })
+  }
+
+  async function handleSearchApiFootballFixtures() {
+    if (!selectedApiFootballLeague || !apiFootballSelectedSeason) {
+      return
+    }
+
+    const payload = await apiFootballFixturesTask.run(() =>
+      fetchApiFootballFixtures({
+        leagueId: selectedApiFootballLeague.league_id,
+        season: Number(apiFootballSelectedSeason),
+      }),
+    )
+    if (!payload) {
+      return
+    }
+
+    dispatch({ type: 'setMatches', matches: payload.matches })
+    setFallbackWarning(payload.status.source === 'api' ? undefined : payload.status.message)
+
+    const routeMatchId = params.matchId ? Number(params.matchId) : undefined
+    const firstMatch = routeMatchId
+      ? payload.matches.find((match) => match.match_id === routeMatchId)
+      : payload.matches[0]
+    dispatch({ type: 'setSelectedMatch', match: firstMatch })
+  }
 
   async function handleLoadData() {
     if (!state.selectedMatch) return
@@ -264,8 +457,12 @@ export function Vertical2Page() {
         matchId: state.selectedMatch!.match_id,
         team: state.selectedTeam === 'Todos' ? undefined : state.selectedTeam,
         player: state.selectedPlayer === 'Todos' ? undefined : state.selectedPlayer,
-        competitionName: state.selectedCompetition?.competition_name,
-        seasonName: state.selectedCompetition?.season_name,
+        competitionName:
+          state.provider === 'API-Football'
+            ? selectedApiFootballLeague?.league_name
+            : state.selectedCompetition?.competition_name,
+        seasonName:
+          state.provider === 'API-Football' ? apiFootballSelectedSeason : state.selectedCompetition?.season_name,
         matchLabel: state.selectedMatch?.display_name,
         homeTeam: state.selectedMatch?.home_team,
         awayTeam: state.selectedMatch?.away_team,
@@ -421,9 +618,37 @@ export function Vertical2Page() {
       ) : (
         <div className="space-y-4">
           <ApiFiltersPanel
+            apiFootballCountries={apiFootballCountries}
+            apiFootballLeagues={apiFootballLeagues}
+            apiFootballLoadingFixtures={apiFootballFixturesTask.loading}
+            apiFootballSelectedCountry={apiFootballSelectedCountry}
+            apiFootballSelectedLeagueId={apiFootballSelectedLeagueId}
+            apiFootballSelectedSeason={apiFootballSelectedSeason}
             competitions={state.competitions}
-            loading={apiTask.loading || competitionsTask.loading || matchesTask.loading}
+            loading={
+              apiTask.loading ||
+              competitionsTask.loading ||
+              matchesTask.loading ||
+              apiFootballCountriesTask.loading ||
+              apiFootballLeaguesTask.loading
+            }
             matches={state.matches}
+            onApiFootballCountryChange={(country) => {
+              setApiFootballSelectedCountry(country)
+              setApiFootballLeagues([])
+              setApiFootballSelectedLeagueId('')
+              setApiFootballSelectedSeason('')
+              resetApiSelectionState()
+            }}
+            onApiFootballLeagueChange={(leagueId) => {
+              setApiFootballSelectedLeagueId(leagueId)
+              resetApiSelectionState()
+            }}
+            onApiFootballSearch={handleSearchApiFootballFixtures}
+            onApiFootballSeasonChange={(season) => {
+              setApiFootballSelectedSeason(season)
+              resetApiSelectionState()
+            }}
             onCompetitionChange={(competitionId) => {
               const selected = state.competitions.find(
                 (competition) => competition.competition_id === Number(competitionId),
@@ -449,6 +674,17 @@ export function Vertical2Page() {
             teamOptions={teamOptions}
             warning={fallbackWarning}
           />
+
+          {state.selectedMatch &&
+          !currentResultMatchesSelection &&
+          (matchingLocalHistoryEntry || matchingBackendHistoryEntry) ? (
+            <HistoryMatchHint
+              backendEntry={matchingBackendHistoryEntry}
+              localEntry={matchingLocalHistoryEntry}
+              onLoadBackend={handleLoadProcessedHistory}
+              onLoadLocal={handleLoadHistory}
+            />
+          ) : null}
 
           <EventHistoryPanel
             activeMatchId={state.result?.match_id}
@@ -515,6 +751,23 @@ export function Vertical2Page() {
                 <h3 className="text-lg font-semibold text-slate-100">Insights iniciales</h3>
                 <InsightsList insights={selectionInsights} />
               </section>
+
+              <AiCoachPanel
+                key={`${state.result.provider}-${state.result.match_id}-${state.selectedTeam}-${state.selectedPlayer}`}
+                result={state.result}
+                selectedPlayer={state.selectedPlayer}
+                selectedTeam={state.selectedTeam}
+              />
+
+              <ProviderDebugPanel
+                history={{
+                  localEntry: matchingLocalHistoryEntry,
+                  backendEntry: matchingBackendHistoryEntry,
+                  onLoadLocal: handleLoadHistory,
+                  onLoadBackend: handleLoadProcessedHistory,
+                }}
+                result={state.result}
+              />
 
               <CanonicalPreview events={state.result.canonical_events} />
             </>

@@ -1,7 +1,19 @@
-import streamlit as st
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - optional in non-UI test environments
+    st = None
+
+
+def _require_streamlit() -> None:
+    if st is None:
+        raise ModuleNotFoundError(
+            "streamlit no esta instalado en este entorno. "
+            "Las funciones de UI legacy requieren esa dependencia."
+        )
 
 
 def apply_premium_theme() -> None:
+    _require_streamlit()
     st.markdown(
         """
         <style>
@@ -240,6 +252,7 @@ def apply_premium_theme() -> None:
 
 
 def render_app_header() -> None:
+    _require_streamlit()
     st.markdown(
         """
         <div class="platform-header">
@@ -252,10 +265,12 @@ def render_app_header() -> None:
 
 
 def render_section_title(text: str) -> None:
+    _require_streamlit()
     st.markdown(f'<div class="section-title">{text}</div>', unsafe_allow_html=True)
 
 
 def render_status_card(title: str, value: str) -> None:
+    _require_streamlit()
     st.markdown(
         f"""
         <div class="status-card">

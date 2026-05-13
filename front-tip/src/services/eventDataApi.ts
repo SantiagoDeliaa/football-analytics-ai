@@ -1,6 +1,13 @@
 import { apiRequest, API_BASE_URL } from './apiClient'
 import { ApiError } from './apiClient'
 import type {
+  ApiFootballCountry,
+  ApiFootballLeague,
+  CoachAnswerResult,
+  CoachConfigStatus,
+  CoachDiagnosisResult,
+  CoachQuestionRequest,
+  CoachRequest,
   Competition,
   EventDataResult,
   IngestionStatus,
@@ -41,6 +48,69 @@ function buildErrorStatus(error: unknown, fallbackMessage: string): IngestionSta
   return {
     source: 'error',
     message: fallbackMessage,
+  }
+}
+
+export async function fetchApiFootballCountries(): Promise<{
+  countries: ApiFootballCountry[]
+  status: IngestionStatus
+}> {
+  try {
+    const countries = await apiRequest<ApiFootballCountry[]>('/api/v1/event-data/api-football/countries')
+    return { countries, status: { source: 'api' } }
+  } catch (error) {
+    return {
+      countries: [],
+      status: buildErrorStatus(error, 'No se pudieron cargar países desde API-Football.'),
+    }
+  }
+}
+
+export async function fetchApiFootballLeagues(params: {
+  country: string
+  season?: number
+  search?: string
+}): Promise<{ leagues: ApiFootballLeague[]; status: IngestionStatus }> {
+  const query = new URLSearchParams({ country: params.country })
+  if (params.season !== undefined) {
+    query.set('season', `${params.season}`)
+  }
+  if (params.search?.trim()) {
+    query.set('search', params.search.trim())
+  }
+
+  try {
+    const leagues = await apiRequest<ApiFootballLeague[]>(
+      `/api/v1/event-data/api-football/leagues?${query.toString()}`,
+    )
+    return { leagues, status: { source: 'api' } }
+  } catch (error) {
+    return {
+      leagues: [],
+      status: buildErrorStatus(error, 'No se pudieron cargar ligas desde API-Football.'),
+    }
+  }
+}
+
+export async function fetchApiFootballFixtures(params: {
+  leagueId: number
+  season: number
+}): Promise<{ matches: Match[]; status: IngestionStatus }> {
+  const query = new URLSearchParams({
+    league_id: `${params.leagueId}`,
+    season: `${params.season}`,
+  })
+
+  try {
+    const matches = await apiRequest<Match[]>(
+      `/api/v1/event-data/api-football/fixtures?${query.toString()}`,
+    )
+    return { matches, status: { source: 'api' } }
+  } catch (error) {
+    return {
+      matches: [],
+      status: buildErrorStatus(error, 'No se pudieron cargar partidos desde API-Football.'),
+    }
   }
 }
 
@@ -156,4 +226,41 @@ export async function loadProcessedHistoryEntry(
   return apiRequest<EventDataResult>(
     `/api/v1/event-data/history/${encodeURIComponent(provider)}/${encodeURIComponent(matchId)}`,
   )
+}
+
+function buildCoachPayload(req: CoachRequest) {
+  return {
+    provider: req.provider,
+    match_id: req.matchId,
+    team: req.team || null,
+    player: req.player || null,
+    competition_name: req.competitionName || null,
+    season_name: req.seasonName || null,
+    match_label: req.matchLabel || null,
+    home_team: req.homeTeam || null,
+    away_team: req.awayTeam || null,
+    match_date: req.matchDate || null,
+  }
+}
+
+export async function fetchCoachStatus(): Promise<CoachConfigStatus> {
+  return apiRequest<CoachConfigStatus>('/api/v1/event-data/coach/status')
+}
+
+export async function generateCoachDiagnosis(req: CoachRequest): Promise<CoachDiagnosisResult> {
+  return apiRequest<CoachDiagnosisResult>('/api/v1/event-data/coach/diagnosis', {
+    method: 'POST',
+    body: JSON.stringify(buildCoachPayload(req)),
+  })
+}
+
+export async function askCoachQuestion(req: CoachQuestionRequest): Promise<CoachAnswerResult> {
+  return apiRequest<CoachAnswerResult>('/api/v1/event-data/coach/question', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...buildCoachPayload(req),
+      question: req.question,
+      conversation_history: req.conversationHistory ?? [],
+    }),
+  })
 }

@@ -11,6 +11,7 @@ from fastapi import HTTPException, UploadFile, status
 from api.schemas import ComputerVisionConfig
 from api.services.computer_vision_service import analyze_video_from_source
 from api.services.computer_vision_service import prepare_job_source
+from api.services.computer_vision_service import prepare_runtime_assets
 
 
 _JOBS_LOCK = threading.Lock()
@@ -22,6 +23,8 @@ def create_job(
     source_mode: str,
     config: ComputerVisionConfig,
     upload_file: UploadFile | None = None,
+    player_model_file: UploadFile | None = None,
+    ball_model_file: UploadFile | None = None,
     soccernet_path: str | None = None,
 ) -> dict[str, Any]:
     try:
@@ -30,6 +33,12 @@ def create_job(
             upload_file=upload_file,
             soccernet_path=soccernet_path,
             config=config,
+        )
+        runtime_assets, cleanup_dir = prepare_runtime_assets(
+            config=config,
+            cleanup_dir=cleanup_dir,
+            player_model_file=player_model_file,
+            ball_model_file=ball_model_file,
         )
     except HTTPException:
         raise
@@ -56,6 +65,7 @@ def create_job(
             "video_name": video_name,
             "cleanup_dir": cleanup_dir,
             "config": config,
+            "runtime_assets": runtime_assets,
         },
         daemon=True,
     )
@@ -81,6 +91,7 @@ def _run_job(
     video_name: str,
     cleanup_dir: Path | None,
     config: ComputerVisionConfig,
+    runtime_assets: dict[str, Path | None],
 ) -> None:
     _update_job(job_id, status="running", error=None)
     try:
@@ -89,6 +100,7 @@ def _run_job(
             video_name=video_name,
             config=config,
             cleanup_dir=cleanup_dir,
+            runtime_assets=runtime_assets,
         )
         _update_job(job_id, status="completed", result=result, error=None)
     except Exception as exc:

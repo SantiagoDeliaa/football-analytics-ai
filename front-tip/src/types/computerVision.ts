@@ -1,7 +1,10 @@
 export type VideoSourceMode = 'upload' | 'soccernet'
 
 export interface ComputerVisionConfig {
-  model_name: 'yolov8n.pt' | 'yolov8s.pt'
+  model_name: 'yolov8n.pt' | 'yolov8s.pt' | 'yolov8m.pt' | 'yolov8l.pt' | 'yolov8x.pt'
+  player_model_source: 'builtin' | 'custom'
+  ball_model_source: 'heuristic' | 'custom'
+  pitch_source: 'homography' | 'soccana' | 'full_field_approx'
   confidence: number
   image_size: 640 | 720 | 960
   only_person: boolean
@@ -17,6 +20,11 @@ export interface ComputerVisionConfig {
   sample_stride: number
   topk_frames: number
   enable_compression: boolean
+}
+
+export interface ComputerVisionModelAssets {
+  playerModelFile?: File
+  ballModelFile?: File
 }
 
 export interface VideoSourceInput {
@@ -100,6 +108,59 @@ export interface PossessionSummary {
   team2_pct: number
   contested_pct: number
   unknown_pct?: number
+  total_frames_analyzed?: number
+  top_possessors?: Array<{
+    tracker_id: number
+    frames: number
+    team: string
+  }>
+  passes?: {
+    team1_passes?: number
+    team2_passes?: number
+    turnovers?: number
+    total?: number
+  }
+  timeline?: {
+    frames?: number[]
+    state?: string[]
+  }
+  reason?: string | null
+}
+
+export interface SpeedDistanceSummary {
+  per_player?: Record<
+    string,
+    {
+      distance_m: number
+      max_speed_kmh: number
+      team: string
+      sprint_count: number
+      sprint_distance_m: number
+      intensity_zones_m?: Record<string, number>
+    }
+  >
+  per_team?: Record<
+    string,
+    {
+      total_distance_m: number
+      avg_distance_m: number
+      max_speed_kmh: number
+      player_count: number
+      total_sprints: number
+      total_sprint_distance_m: number
+    }
+  >
+}
+
+export interface ScoutingHeatmapSummary {
+  total_samples?: number
+  downsampled_shape?: number[]
+}
+
+export interface ComputerVisionArtifacts {
+  video_url?: string | null
+  stats_json_url?: string | null
+  pdf_url?: string | null
 }
 
 export interface ComputerVisionResult {
@@ -126,6 +187,15 @@ export interface ComputerVisionResult {
     csv: boolean
     pdf: boolean
   }
+  quality_control?: Record<string, unknown>
+  speed_distance?: SpeedDistanceSummary
+  scouting_heatmaps?: {
+    team1?: ScoutingHeatmapSummary
+    team2?: ScoutingHeatmapSummary
+    bins_shape?: number[]
+  }
+  homography_telemetry?: Record<string, unknown>
+  artifacts?: ComputerVisionArtifacts
   warnings: string[]
   interpretation: string[]
 }
