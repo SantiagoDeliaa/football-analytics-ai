@@ -113,6 +113,11 @@ def _friendly_ai_coach_error_message(
             "El AI Coach no tiene cuota disponible en el provider configurado. "
             "Revisá billing, plan o límites del proyecto e intentá nuevamente más tarde."
         )
+    if status_code == 503 or "service unavailable" in normalized or '"status": "unavailable"' in normalized:
+        return (
+            "El provider del AI Coach no está disponible en este momento. "
+            "Intentá nuevamente en unos minutos."
+        )
     if status_code == 401 or "unauthorized" in normalized or "invalid api key" in normalized:
         return "La credencial configurada para el AI Coach no es válida o no tiene permisos."
     if status_code == 403 or "forbidden" in normalized or "permission denied" in normalized:
