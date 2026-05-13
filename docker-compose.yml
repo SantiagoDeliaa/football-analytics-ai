@@ -1,13 +1,16 @@
 services:
   backend:
     build:
-      context: ./football-analytics-ai
+      context: .
       dockerfile: Dockerfile.api
     container_name: sport-analytics-backend
     ports:
       - "8000:8000"
     volumes:
-      - ./football-analytics-ai:/app
+      - ./api:/app/api
+      - ./src:/app/src
+      - ./app.py:/app/app.py
+      - ./requirements.txt:/app/requirements.txt
     restart: unless-stopped
 
   frontend:
