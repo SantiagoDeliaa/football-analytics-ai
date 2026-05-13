@@ -194,9 +194,7 @@ def render_ai_coach_panel(
 
     st.markdown("### AI Tactical Coach")
     st.caption("Consultá el partido con contexto táctico generado por TIP.")
-    if is_configured:
-        st.caption("AI Coach configurado.")
-    else:
+    if not is_configured:
         st.warning("Falta configurar AI_COACH_API_KEY para activar el AI Tactical Coach.")
 
     if st.button(
