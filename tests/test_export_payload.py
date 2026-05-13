@@ -6,6 +6,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from src.controllers.process_video import build_export_payload
+from src.controllers import process_video as process_video_module
 
 
 def test_build_export_payload_debug_sampled_schema():
@@ -43,3 +44,8 @@ def test_build_export_payload_debug_sampled_schema():
     assert len(payload["formations"]["team1"]["top_k"]) <= 2
     assert payload["timeline"]["health_sampling_stride"] == 2
     assert len(payload["timeline"]["series_frames"]) == len(payload["timeline"]["health_sampled"])
+
+
+def test_vertical1_display_names_are_generic():
+    assert process_video_module.TEAM1_DISPLAY_NAME == "Team 1"
+    assert process_video_module.TEAM2_DISPLAY_NAME == "Team 2"

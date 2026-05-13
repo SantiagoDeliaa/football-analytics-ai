@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 venv/
 env/
+.mypy_cache/
+.ruff_cache/
 
 # === Data & Media (Ignored to save space) ===
 inputs/
@@ -31,11 +33,29 @@ models/
 .DS_Store
 Thumbs.db
 
+# === Local event data cache / persistence ===
+data/tip_event_data.sqlite
+data/tip_event_data.sqlite-*
+data/event_data/raw/
+data/event_data/canonical/
+data/event_data/metrics/
+
+# === Local environment variables / secrets ===
+.env
+.env.*
+!.env.example
+
+# === Streamlit local config / cache ===
+.streamlit/secrets.toml
+
 # === Logs & Temp ===
 *.log
 *.tmp
 .pytest_cache/
 .coverage
 htmlcov/
+logs/
+tmp/
+temp/
 # Ignorar todos los videos (recomendado para no renegar a futuro)
 *.mp4

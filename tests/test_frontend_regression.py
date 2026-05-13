@@ -38,6 +38,10 @@ class FakeUploadedFile:
         return self._payload
 
 
+class StopExecution(Exception):
+    pass
+
+
 class FakeProgress:
     def __init__(self, recorder):
         self.recorder = recorder
@@ -92,6 +96,9 @@ class FakeSidebar:
         self.recorder.sidebar_file_uploaders.append(label)
         return self.config.get("file_uploader", {}).get(label, None)
 
+    def button(self, label, **kwargs):
+        return self.config.get("button", {}).get(label, False)
+
     def success(self, text):
         self.recorder.success_messages.append(str(text))
 
@@ -121,6 +128,10 @@ class StreamlitRecorder:
         self.placeholder_texts = []
         self.progress_values = []
         self.plotly_calls = 0
+        self.plotly_keys = []
+        self.text_inputs = []
+        self.json_payloads = []
+        self.expander_labels = []
         self.dataframe_calls = 0
         self.download_buttons = []
         self.sidebar_headers = []
@@ -149,6 +160,9 @@ class StreamlitRecorder:
         self.captions.append(str(text))
 
     def header(self, text):
+        self.headers.append(str(text))
+
+    def title(self, text):
         self.headers.append(str(text))
 
     def subheader(self, text):
@@ -180,7 +194,16 @@ class StreamlitRecorder:
         return False
 
     def button(self, label, **kwargs):
+        button_config = self.config.get("button", {})
+        if isinstance(button_config, dict):
+            if label in button_config:
+                return button_config[label]
         return self.config.get("button_clicked", False)
+
+    def text_input(self, label, value="", **kwargs):
+        selected = self.config.get("text_input", {}).get(label, value)
+        self.text_inputs.append((label, selected))
+        return selected
 
     def checkbox(self, label, value=False, **kwargs):
         return self.config.get("checkbox", {}).get(label, value)
@@ -198,6 +221,9 @@ class StreamlitRecorder:
     def rerun(self):
         return None
 
+    def stop(self):
+        raise StopExecution()
+
     def divider(self):
         return None
 
@@ -206,6 +232,7 @@ class StreamlitRecorder:
 
     def plotly_chart(self, *args, **kwargs):
         self.plotly_calls += 1
+        self.plotly_keys.append(kwargs.get("key"))
 
     def image(self, *args, **kwargs):
         return None
@@ -223,13 +250,17 @@ class StreamlitRecorder:
         self.success_messages.append(str(text))
 
     def expander(self, label, **kwargs):
+        self.expander_labels.append(str(label))
         return FakeContext()
 
     def text(self, value):
         self.markdowns.append(str(value))
 
-    def code(self, value):
+    def code(self, value, **kwargs):
         self.markdowns.append(str(value))
+
+    def json(self, value, **kwargs):
+        self.json_payloads.append(value)
 
 
 def make_streamlit_module(config):
@@ -242,6 +273,7 @@ def make_streamlit_module(config):
     module.markdown = recorder.markdown
     module.caption = recorder.caption
     module.header = recorder.header
+    module.title = recorder.title
     module.subheader = recorder.subheader
     module.metric = recorder.metric
     module.file_uploader = recorder.file_uploader
@@ -250,11 +282,13 @@ def make_streamlit_module(config):
     module.video = recorder.video
     module.download_button = recorder.download_button
     module.button = recorder.button
+    module.text_input = recorder.text_input
     module.checkbox = recorder.checkbox
     module.spinner = recorder.spinner
     module.empty = recorder.empty
     module.progress = recorder.progress
     module.rerun = recorder.rerun
+    module.stop = recorder.stop
     module.divider = recorder.divider
     module.dataframe = recorder.dataframe
     module.plotly_chart = recorder.plotly_chart
@@ -266,6 +300,7 @@ def make_streamlit_module(config):
     module.expander = recorder.expander
     module.text = recorder.text
     module.code = recorder.code
+    module.json = recorder.json
     return module, recorder
 
 
@@ -374,17 +409,49 @@ def make_reportlab_modules():
 
 
 def run_app(monkeypatch, config):
+    session_state = dict(config.get("session_state", {}))
+    session_state.setdefault("active_vertical", "vertical1")
+    config = dict(config)
+    config["session_state"] = session_state
     st_module, recorder = make_streamlit_module(config)
     monkeypatch.setitem(sys.modules, "streamlit", st_module)
     monkeypatch.setitem(sys.modules, "ultralytics", make_ultralytics_module())
     monkeypatch.setitem(sys.modules, "src.controllers.process_video", make_process_video_module())
     for module_name, module_obj in make_reportlab_modules().items():
         monkeypatch.setitem(sys.modules, module_name, module_obj)
-    for name in ["app", "src.models.load_model", "src.utils.ui.theme"]:
+    for name in [
+        "app",
+        "src.models.load_model",
+        "src.utils.ui.theme",
+        "src.utils.ui.ai_coach_panel",
+        "src.verticals.home",
+        "src.verticals.vertical1",
+        "src.verticals.vertical2",
+        "src.verticals.vertical2_api_event",
+        "src.verticals.vertical1_legacy",
+    ]:
         if name in sys.modules:
             del sys.modules[name]
-    importlib.import_module("app")
+    try:
+        importlib.import_module("app")
+    except StopExecution:
+        pass
     return recorder
+
+
+def load_vertical2_api_event(monkeypatch, config=None):
+    config = config or {"session_state": {}}
+    session_state = dict(config.get("session_state", {}))
+    config = dict(config)
+    config["session_state"] = session_state
+    st_module, recorder = make_streamlit_module(config)
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.utils.ui.ai_coach_panel" in sys.modules:
+        del sys.modules["src.utils.ui.ai_coach_panel"]
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    module = importlib.import_module("src.verticals.vertical2_api_event")
+    return module, recorder
 
 
 def build_full_stats():
@@ -497,10 +564,114 @@ def test_smoke_app_imports_without_video(monkeypatch):
     assert any("Sin video cargado" in item for item in recorder.markdowns)
 
 
+def test_router_home_does_not_execute_vertical1_legacy_block(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
+    assert any("tip-title" in item for item in recorder.markdowns)
+    assert any("tip-inline-tip" in item for item in recorder.markdowns)
+    assert any("TIP" in item for item in recorder.markdowns)
+    assert not any("Selecciona una vertical para continuar" in item for item in recorder.markdowns)
+    assert recorder.sidebar_subheaders == []
+    assert recorder.file_uploaders == []
+
+
+def test_router_vertical2_does_not_execute_vertical1_legacy_block(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "vertical2"}})
+    assert "Data Analytics" in recorder.headers
+    assert any("Sube un PDF Wyscout" in msg for msg in recorder.info_messages)
+    assert "Subir reporte Wyscout (.pdf)" in recorder.file_uploaders
+    assert recorder.tabs_labels == ["API Event Data", "Load PDF"]
+    assert "API Event Data" in recorder.subheaders
+    assert recorder.sidebar_subheaders == []
+
+
+def test_home_click_navigates_to_computer_vision(monkeypatch):
+    cv_label = "Computer Vision\nTracking and tactical metrics from broadcast video"
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "home"},
+            "button": {cv_label: True},
+        },
+    )
+    assert recorder.session_state.active_vertical == "vertical1"
+
+
+def test_home_click_navigates_to_data_analytics(monkeypatch):
+    cv_label = "Computer Vision\nTracking and tactical metrics from broadcast video"
+    da_label = "Data Analytics\nTactical insights and proprietary metrics from event data and reports"
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "home"},
+            "button": {cv_label: False, da_label: True},
+        },
+    )
+    assert recorder.session_state.active_vertical == "vertical2"
+
+
+def test_home_branding_renders_inline_tip_and_highlighted_initials(monkeypatch):
+    recorder = run_app(monkeypatch, {"uploaded_video": None, "session_state": {"active_vertical": "home"}})
+    assert any(
+        '<h1 class="tip-title"><span class="tip-accent">T</span>actical <span class="tip-accent">I</span>ntelligence <span class="tip-accent">P</span>latform <span class="tip-inline-tip">(<span class="tip-accent">TIP</span>)</span></h1>'
+        in item
+        for item in recorder.markdowns
+    )
+
+
+def test_vertical2_back_to_home_sets_route(monkeypatch):
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": None,
+            "session_state": {"active_vertical": "vertical2"},
+            "button": {"Volver a Home": True},
+        },
+    )
+    assert recorder.session_state.active_vertical == "home"
+
+
+def test_vertical2_pdf_upload_renders_normalized_schema_preview(monkeypatch):
+    uploaded = FakeUploadedFile("wyscout_report.pdf", b"dummy bytes")
+    recorder = run_app(
+        monkeypatch,
+        {
+            "uploaded_video": uploaded,
+            "session_state": {"active_vertical": "vertical2"},
+        },
+    )
+    assert any("Archivo:** wyscout_report.pdf" in item for item in recorder.markdowns)
+    metric_labels = [label for label, _ in recorder.metrics]
+    assert metric_labels == [
+        "Control del Juego",
+        "Velocidad de Ataque",
+        "Impacto del Pressing",
+        "Riesgo en Salida",
+    ]
+    assert any(level in item for item in recorder.markdowns for level in ["Nivel: Alto", "Nivel: Medio", "Nivel: Bajo"])
+    assert any(
+        interpretation in item
+        for item in recorder.captions
+        for interpretation in [
+            "El equipo dominó territorialmente el partido.",
+            "El equipo tuvo control parcial del territorio.",
+            "El equipo tuvo poca presencia en campo rival.",
+        ]
+    )
+    assert "Radar Táctico" in recorder.subheaders
+    assert "Insights del Partido" in recorder.subheaders
+    assert recorder.tabs_labels == ["Attack", "Defense", "Transitions"]
+    assert recorder.plotly_calls == 4
+    assert any("Preview del schema normalizado" in item for item in recorder.subheaders)
+    assert any('"match_info"' in item for item in recorder.markdowns)
+    assert any('"proprietary_metrics"' in item for item in recorder.markdowns)
+
+
 def test_smoke_tabs_exist_when_video_loaded(monkeypatch):
     uploaded = FakeUploadedFile("demo.mp4", b"video")
     recorder = run_app(monkeypatch, {"uploaded_video": uploaded, "session_state": {}})
-    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Guía", "Posesión"]
+    assert recorder.tabs_labels == ["Video", "Estadísticas", "Gráficos", "Exportar", "Scouting", "Interpretación", "Posesión"]
 
 
 def test_regression_video_loaded_not_processed_shows_safe_state(monkeypatch):
@@ -527,7 +698,7 @@ def test_regression_processed_with_stats_renders_core_views(monkeypatch):
     )
     assert "Exportar datos" in recorder.subheaders
     assert "Scouting" in recorder.subheaders
-    assert "Guía de interpretación" in recorder.subheaders
+    assert "Interpretación" in recorder.subheaders
     assert "Posesión de pelota" in recorder.subheaders
     assert recorder.plotly_calls >= 2
     assert recorder.dataframe_calls >= 2
@@ -578,6 +749,100 @@ def test_regression_partial_stats_do_not_break_render(monkeypatch):
     assert not any("Traceback" in item for item in recorder.markdowns)
 
 
+def test_event_normalizer_returns_stable_schema_keys_on_fallback():
+    from src.services.event_normalizer import normalize_event_data
+
+    normalized = normalize_event_data(
+        {
+            "status": "warning",
+            "file_name": "empty_report.pdf",
+            "page_count": 0,
+            "raw_text": "",
+        }
+    )
+    assert set(normalized.keys()) >= {
+        "match_info",
+        "team_summary",
+        "formations",
+        "attack",
+        "defense",
+        "transitions",
+        "build_up",
+        "finishing",
+    }
+    assert normalized["status"] == "warning"
+
+
+def test_proprietary_metrics_returns_four_scores_in_valid_range():
+    from src.services.proprietary_metrics import calculate_proprietary_metrics
+
+    normalized = {
+        "attack": {"signals": {"final third": 3, "box entries": 2, "shots": 4}},
+        "defense": {"signals": {"pressing": 2, "recoveries": 3}},
+        "transitions": {"signals": {"direct attack": 1, "counter": 2, "regain": 3, "turnover": 1}},
+        "build_up": {"signals": {"progression": 4, "possession": 2}},
+        "finishing": {"signals": {"on target": 2}},
+        "meta": {"sections_detected": {"attack": 2, "build_up": 2}},
+    }
+    raw = {"raw_text": "Possession: 62%"}
+    metrics = calculate_proprietary_metrics(normalized, raw)
+    assert set(metrics.keys()) == {
+        "field_tilt_index",
+        "directness_index",
+        "pressing_efficiency",
+        "risk_exposure_score",
+    }
+    for metric in metrics.values():
+        assert 0 <= metric["score"] <= 100
+        assert metric["label"]
+        assert metric["description"]
+        assert metric["category"] in {"Low", "Medium", "High"}
+
+
+def test_proprietary_metric_presentation_returns_spanish_copy_and_color():
+    from src.services.proprietary_metrics import get_metric_presentation
+
+    presentation = get_metric_presentation("field_tilt_index", {"category": "High"})
+    assert presentation["label"] == "Control del Juego"
+    assert presentation["level"] == "Alto"
+    assert presentation["color"] == "#22c55e"
+    assert presentation["interpretation"] == "El equipo dominó territorialmente el partido."
+
+
+def test_pitch_view_builder_returns_figure_and_metadata():
+    from src.utils.ui.pitch_views import build_pitch_view_figure
+
+    normalized = {
+        "attack": {"signals": {"crosses": 2, "box entries": 2, "final third": 3, "shots": 1, "xg": 1}},
+        "defense": {"signals": {"duels": 4, "pressing": 2, "recoveries": 1}},
+        "transitions": {"signals": {"turnover": 2, "regain": 3, "counter": 1, "direct attack": 1, "transition": 2}},
+    }
+    view = build_pitch_view_figure("Transitions", normalized)
+    assert view["title"] == "Transitions View"
+    assert isinstance(view["subtitle"], str) and view["subtitle"]
+    assert view["figure"] is not None
+    assert isinstance(view["has_signal"], bool)
+
+
+def test_insight_generator_returns_readable_insights():
+    from src.services.insight_generator import generate_match_insights
+
+    normalized = {
+        "attack": {"signals": {"final third": 3, "crosses": 1, "box entries": 2, "shots": 2}},
+        "defense": {"signals": {"recoveries": 2}},
+        "transitions": {"signals": {"regain": 2, "turnover": 1}},
+    }
+    metrics = {
+        "field_tilt_index": {"score": 78},
+        "directness_index": {"score": 64},
+        "pressing_efficiency": {"score": 71},
+        "risk_exposure_score": {"score": 32},
+    }
+    insights = generate_match_insights(normalized, metrics)
+    assert 3 <= len(insights) <= 5
+    assert all(isinstance(item, str) and item for item in insights)
+
+
 def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):
     st_module, _ = make_streamlit_module({"session_state": {}})
     monkeypatch.setitem(sys.modules, "streamlit", st_module)
@@ -590,6 +855,692 @@ def test_component_apply_plotly_dark_theme_sets_expected_layout(monkeypatch):
     assert fig.layout.template is not None
     assert fig.layout.paper_bgcolor == "#0f131a"
     assert fig.layout.plot_bgcolor == "#141b24"
+
+
+def test_open_event_visualizations_render_visible_traces_and_keep_pitch_below():
+    from src.services.open_event_visualizations import create_event_map
+    from src.services.open_event_visualizations import create_progressive_actions_map
+
+    canonical_events = [
+        {
+            "event_id": "1",
+            "match_id": "m1",
+            "team_id": "t1",
+            "team_name": "Argentina",
+            "player_id": "p1",
+            "player_name": "Lionel Messi",
+            "minute": 12,
+            "second": 8,
+            "event_type": "Pass",
+            "x": 42.0,
+            "y": 30.0,
+            "end_x": 65.0,
+            "end_y": 34.0,
+            "outcome": "Complete",
+            "progressive": True,
+            "under_pressure": False,
+            "xG": 0.0,
+            "xA": 0.0,
+        },
+        {
+            "event_id": "2",
+            "match_id": "m1",
+            "team_id": "t1",
+            "team_name": "Argentina",
+            "player_id": "p2",
+            "player_name": "Julian Alvarez",
+            "minute": 25,
+            "second": 14,
+            "event_type": "Shot",
+            "x": 102.0,
+            "y": 36.0,
+            "end_x": None,
+            "end_y": None,
+            "outcome": "Goal",
+            "progressive": False,
+            "under_pressure": True,
+            "xG": 0.34,
+            "xA": 0.0,
+        },
+    ]
+
+    event_map = create_event_map(canonical_events, selected_team="Argentina")
+    assert len(event_map.data) >= 2
+    assert all(getattr(shape, "layer", None) == "below" for shape in event_map.layout.shapes)
+
+    progressive_map = create_progressive_actions_map(canonical_events, selected_team="Argentina")
+    assert len(progressive_map.data) >= 1
+    assert progressive_map.data[0].mode == "lines+markers"
+
+
+def test_api_event_dashboard_hides_technical_information_by_default(monkeypatch):
+    st_module, recorder = make_streamlit_module({"session_state": {}})
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    from src.verticals.vertical2_api_event import _render_common_event_dashboard
+
+    result = {
+        "competition_name": "UEFA Euro",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    _render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    assert "Información técnica" not in recorder.markdowns
+    assert not any("Canonical Event Model" in item for item in recorder.markdowns)
+    assert all(key is not None for key in recorder.plotly_keys)
+    assert len(recorder.plotly_keys) == len(set(recorder.plotly_keys))
+
+
+def test_api_event_dashboard_shows_ai_coach_warning_when_key_is_missing(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        sys.modules["src.utils.ui.ai_coach_panel"],
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": False,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "Falta configurar AI_COACH_API_KEY en el entorno.",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    assert any("AI Tactical Coach" in item for item in recorder.markdowns)
+    assert any("Falta configurar AI_COACH_API_KEY para activar el AI Tactical Coach." in item for item in recorder.warning_messages)
+    assert all("AI Coach configurado." not in item for item in recorder.captions)
+
+
+def test_api_event_dashboard_can_generate_ai_coach_diagnosis_and_debug_context(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Generar diagnóstico táctico": True},
+        },
+    )
+    import src.utils.ui.ai_coach_panel as ai_coach_panel
+
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "generate_tactical_diagnosis",
+        lambda match_context: {
+            "ok": True,
+            "diagnosis": "Diagnóstico táctico de prueba.",
+            "error": "",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "answer_coach_question",
+        lambda match_context, user_question, conversation_history=None: {
+            "ok": True,
+            "answer": "Respuesta de prueba.",
+            "error": "",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.1,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=True)
+
+    assert any("Diagnóstico táctico de prueba." in item for item in recorder.markdowns)
+    assert "Match Context enviado al AI Coach" in recorder.expander_labels
+    assert recorder.json_payloads
+
+
+def test_ai_coach_chat_uses_safe_input_clear_pattern(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Preguntar": True},
+            "text_input": {"Preguntale algo al AI Coach...": "¿Cómo estuvo el equipo?"},
+        },
+    )
+    import src.utils.ui.ai_coach_panel as ai_coach_panel
+
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "api_key_configured": True,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://api.openai.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        ai_coach_panel,
+        "answer_coach_question",
+        lambda match_context, user_question, conversation_history=None: {
+            "ok": True,
+            "answer": "Respuesta contextual de prueba.",
+            "error": "",
+        },
+    )
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_STATSBOMB,
+        "match_id": "m1",
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "match_label": "Argentina vs Francia",
+        "raw_payload": [{"id": "raw-1"}],
+        "canonical_events": [
+            {
+                "event_id": "1",
+                "match_id": "m1",
+                "team_id": "t1",
+                "team_name": "Argentina",
+                "player_id": "p1",
+                "player_name": "Lionel Messi",
+                "minute": 10,
+                "second": 5,
+                "event_type": "Pass",
+                "x": 42.0,
+                "y": 30.0,
+                "end_x": 61.0,
+                "end_y": 34.0,
+                "outcome": "Complete",
+                "progressive": True,
+                "under_pressure": False,
+                "xG": 0.1,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(result, selected_team="Todos", selected_player="Todos", show_technical_info=False)
+
+    chat_key = ai_coach_panel.build_ai_coach_state_key(
+        "ai_coach_chat",
+        provider=module.STORAGE_PROVIDER_STATSBOMB,
+        match_id="m1",
+        selected_team="Todos",
+        selected_player="Todos",
+    )
+    clear_key = ai_coach_panel.build_ai_coach_state_key(
+        "ai_coach_clear_input",
+        provider=module.STORAGE_PROVIDER_STATSBOMB,
+        match_id="m1",
+        selected_team="Todos",
+        selected_player="Todos",
+    )
+
+    assert recorder.session_state[chat_key][-2:] == [
+        {"role": "user", "content": "¿Cómo estuvo el equipo?"},
+        {"role": "assistant", "content": "Respuesta contextual de prueba."},
+    ]
+    assert recorder.session_state[clear_key] is True
+
+
+def test_api_event_config_debug_status_hides_secret_values(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        module,
+        "get_api_football_config_status",
+        lambda: {
+            "configured": True,
+            "message": "API-Football configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": False,
+            "api_key_configured": False,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://example.com/v1/chat/completions",
+            "message": "Falta configurar AI_COACH_API_KEY en el entorno.",
+        },
+    )
+
+    module._render_environment_config_status(show_technical_info=True)
+
+    assert not any("Estado seguro de configuración" in item for item in recorder.captions)
+    assert "Estado técnico de variables de entorno" in recorder.expander_labels
+    assert recorder.json_payloads
+    serialized = str(recorder.json_payloads[-1])
+    assert "demo-key" not in serialized
+    assert "secret" not in serialized
+
+
+def test_api_event_config_status_is_hidden_from_main_view(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    monkeypatch.setattr(
+        module,
+        "get_api_football_config_status",
+        lambda: {
+            "configured": True,
+            "message": "API-Football configurado correctamente.",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "get_ai_coach_config_status",
+        lambda: {
+            "configured": True,
+            "api_key_configured": True,
+            "model_configured": True,
+            "base_url_configured": True,
+            "model": "gpt-4o-mini",
+            "base_url": "https://example.com/v1/chat/completions",
+            "message": "AI Tactical Coach configurado correctamente.",
+        },
+    )
+
+    module._render_environment_config_status(show_technical_info=False)
+
+    assert not recorder.captions
+    assert "Estado técnico de variables de entorno" not in recorder.expander_labels
+
+
+def test_api_football_provider_sections_show_technical_tables_only_in_debug(monkeypatch):
+    st_module, recorder = make_streamlit_module({"session_state": {}})
+    monkeypatch.setitem(sys.modules, "streamlit", st_module)
+    if "src.verticals.vertical2_api_event" in sys.modules:
+        del sys.modules["src.verticals.vertical2_api_event"]
+    from src.verticals.vertical2_api_event import _render_api_football_provider_sections
+
+    result = {
+        "raw_payload": {
+            "events": [
+                {
+                    "time": {"elapsed": 12},
+                    "team": {"name": "Argentina"},
+                    "player": {"name": "Lionel Messi"},
+                    "type": "Goal",
+                    "detail": "Normal Goal",
+                    "comments": "",
+                }
+            ],
+            "lineups": [
+                {
+                    "team": {"name": "Argentina"},
+                    "formation": "4-3-3",
+                    "startXI": [{"player": {"name": "Lionel Messi"}}],
+                    "substitutes": [{"player": {"name": "Julian Alvarez"}}],
+                }
+            ],
+            "statistics": [
+                {
+                    "team": {"name": "Argentina"},
+                    "statistics": [{"type": "Shots on Goal", "value": 5}],
+                }
+            ],
+            "players": [
+                {
+                    "team": {"name": "Argentina"},
+                    "players": [{"player": {"name": "Lionel Messi", "age": 36, "pos": "F", "number": 10}}],
+                }
+            ],
+        },
+        "canonical_events": [],
+    }
+
+    _render_api_football_provider_sections(result, show_technical_info=False)
+    assert recorder.dataframe_calls == 0
+
+    recorder.dataframe_calls = 0
+    _render_api_football_provider_sections(result, show_technical_info=True)
+    assert recorder.dataframe_calls >= 1
+
+
+def test_statsbomb_provider_loads_dashboard_from_local_history(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Cargar desde historial local": True},
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+    canonical_events = [
+        {
+            "event_id": "1",
+            "match_id": "3775648",
+            "team_id": "779",
+            "team_name": "Argentina",
+            "player_id": "p1",
+            "player_name": "Lionel Messi",
+            "minute": 10,
+            "second": 5,
+            "event_type": "Pass",
+            "x": 42.0,
+            "y": 30.0,
+            "end_x": 61.0,
+            "end_y": 34.0,
+            "outcome": "Complete",
+            "progressive": True,
+            "under_pressure": False,
+            "xG": 0.0,
+            "xA": 0.0,
+        }
+    ]
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: True)
+    monkeypatch.setattr(
+        module,
+        "load_processed_match_payloads",
+        lambda provider, match_id: {
+            "raw_events": [{"id": "raw-1"}],
+            "canonical_events": canonical_events,
+            "metrics": {"total_events": 1},
+        },
+    )
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    stored = recorder.session_state[module.SESSION_RESULT_KEY]
+    assert stored["provider"] == module.STORAGE_PROVIDER_STATSBOMB
+    assert stored["loaded_from_local"] is True
+    assert stored["match_id"] == "3775648"
+    assert ("Eventos analizados", "1") in recorder.metrics
+
+
+def test_statsbomb_provider_warns_on_persistence_failure_but_keeps_dashboard(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Cargar datos": True},
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+    raw_events = [
+        {
+            "id": "evt-1",
+            "team": {"id": 779, "name": "Argentina"},
+            "player": {"id": 10, "name": "Lionel Messi"},
+            "minute": 10,
+            "second": 5,
+            "type": {"name": "Pass"},
+            "location": [42.0, 30.0],
+            "pass": {"end_location": [61.0, 34.0]},
+        }
+    ]
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "_cached_events", lambda match_id: raw_events)
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: False)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    def _raise_on_save(*args, **kwargs):
+        raise RuntimeError("sqlite unavailable")
+
+    monkeypatch.setattr(module, "save_processed_match", _raise_on_save)
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    assert any("No se pudo guardar el partido en historial local" in item for item in recorder.warning_messages)
+    assert ("Eventos analizados", "1") in recorder.metrics
+    assert recorder.plotly_calls >= 1
+
+
+def test_api_football_provider_translates_plan_error_in_ui(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {},
+            "button": {"Buscar partidos": True},
+        },
+    )
+
+    country = {"name": "Argentina", "display_name": "Argentina"}
+    league = {
+        "league_id": 130,
+        "league_name": "Copa Argentina",
+        "display_name": "Copa Argentina (Argentina)",
+        "seasons": [{"year": 2024}, {"year": 2023}],
+        "current_season": 2024,
+    }
+    error_status = {
+        "status": "error",
+        "message": "API-Football devolvió errores en la respuesta.",
+        "errors": ["plan: Free plans do not have access to this season, try from 2022 to 2024."],
+    }
+
+    monkeypatch.setattr(module, "get_api_football_api_key", lambda: "test-key")
+    monkeypatch.setattr(module, "_cached_api_countries", lambda: [country])
+    monkeypatch.setattr(module, "_cached_api_leagues", lambda country=None, season=None, search=None: [league])
+    monkeypatch.setattr(module, "_cached_api_fixtures", lambda league_id, season, last=None: [])
+    monkeypatch.setattr(module, "get_api_football_status", lambda: error_status)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_api_football_provider(show_technical_info=False)
+
+    assert any("Tu plan actual no tiene acceso a la temporada seleccionada" in item for item in recorder.warning_messages)
+
+
+def test_api_football_dashboard_without_coordinates_shows_message_and_skips_maps(monkeypatch):
+    module, recorder = load_vertical2_api_event(monkeypatch, {"session_state": {}})
+
+    result = {
+        "provider": module.STORAGE_PROVIDER_API_FOOTBALL,
+        "match_id": "12345",
+        "competition_name": "Liga Profesional",
+        "match_label": "River Plate vs Boca Juniors",
+        "raw_payload": {"events": []},
+        "canonical_events": [
+            {
+                "event_id": "12345-0-goal-15",
+                "match_id": "12345",
+                "team_id": "435",
+                "team_name": "River Plate",
+                "player_id": "unknown-player",
+                "player_name": "Jugador desconocido",
+                "minute": 15,
+                "second": 0,
+                "event_type": "Goal",
+                "x": None,
+                "y": None,
+                "end_x": None,
+                "end_y": None,
+                "outcome": "Normal Goal",
+                "progressive": False,
+                "under_pressure": False,
+                "xG": 0.0,
+                "xA": 0.0,
+            }
+        ],
+    }
+
+    module._render_common_event_dashboard(
+        result,
+        selected_team="Todos",
+        selected_player="Todos",
+        show_technical_info=False,
+    )
+
+    assert any("Este provider no entrega coordenadas de eventos para este partido" in item for item in recorder.info_messages)
+    assert recorder.plotly_calls == 0
+
+
+def test_statsbomb_provider_ignores_stale_session_result_from_other_provider(monkeypatch):
+    module, recorder = load_vertical2_api_event(
+        monkeypatch,
+        {
+            "session_state": {
+                "vertical2_api_event_result": {
+                    "provider": "api_football",
+                    "match_id": "old-fixture",
+                    "canonical_events": [{"event_id": "stale"}],
+                    "raw_payload": {"events": [{"id": "stale"}]},
+                }
+            }
+        },
+    )
+
+    competition = {
+        "competition_id": 55,
+        "season_id": 43,
+        "competition_name": "UEFA Euro",
+        "season_name": "2020",
+        "display_name": "UEFA Euro - 2020",
+    }
+    match = {
+        "match_id": "3775648",
+        "home_team": "Argentina",
+        "away_team": "Francia",
+        "match_date": "2022-12-18",
+        "display_name": "Argentina vs Francia — 2022-12-18",
+    }
+
+    monkeypatch.setattr(module, "_cached_competitions", lambda: [competition])
+    monkeypatch.setattr(module, "_cached_matches", lambda competition_id, season_id: [match])
+    monkeypatch.setattr(module, "has_processed_match", lambda provider, match_id: False)
+    monkeypatch.setattr(module, "get_processed_matches", lambda limit=20: [])
+
+    module._render_statsbomb_provider(show_technical_info=False)
+
+    assert any("Configurá filtros y presioná 'Cargar datos' para ver métricas e insights." in item for item in recorder.info_messages)
+    assert ("Eventos analizados", "1") not in recorder.metrics
 
 
 def test_component_build_centroid_heatmap_handles_empty_and_valid():
