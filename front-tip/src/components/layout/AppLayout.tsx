@@ -5,6 +5,7 @@ import {
   loadVertical2Page,
   scheduleModulePrefetch,
 } from '../../app/modulePreload'
+import { AiCoachChatWidget } from '../coach/AiCoachChatWidget'
 
 const navItems = [
   { to: '/', label: 'Inicio', preload: loadHomePage },
@@ -49,6 +50,7 @@ export function AppLayout() {
       <main className="mx-auto w-full max-w-6xl px-4 py-6 md:py-8">
         <Outlet />
       </main>
+      <AiCoachChatWidget />
     </div>
   )
 }

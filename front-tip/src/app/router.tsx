@@ -9,6 +9,7 @@ import {
 import { LoadingState } from '../components/common/LoadingState'
 import { RouteErrorBoundary } from '../components/common/RouteErrorBoundary'
 import { AppLayout } from '../components/layout/AppLayout'
+import { AiCoachChatProvider } from './AiCoachChatContext'
 import { EventDataProvider } from './EventDataContext'
 
 const HomePage = lazy(async () => {
@@ -40,9 +41,11 @@ export const router = createBrowserRouter([
     path: '/',
     errorElement: <RouteErrorBoundary />,
     element: (
-      <EventDataProvider>
-        <AppLayout />
-      </EventDataProvider>
+      <AiCoachChatProvider>
+        <EventDataProvider>
+          <AppLayout />
+        </EventDataProvider>
+      </AiCoachChatProvider>
     ),
     children: [
       { index: true, element: withRouteLoader(<HomePage />) },
