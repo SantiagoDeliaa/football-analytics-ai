@@ -182,3 +182,48 @@ def load_processed_match_payloads(provider: str, match_id: str) -> dict[str, Any
 
 def has_processed_match(provider: str, match_id: str) -> bool:
     return get_processed_match(provider, match_id) is not None
+
+
+def delete_processed_match(provider: str, match_id: str) -> dict[str, Any]:
+    initialize_event_data_db()
+    match_row = get_processed_match(provider, match_id)
+    if not match_row:
+        return {
+            "ok": False,
+            "message": f"No se encontró el partido procesado {provider}:{match_id}.",
+        }
+
+    warnings: list[str] = []
+    file_fields = ("raw_path", "canonical_path", "metrics_path")
+
+    for field_name in file_fields:
+        raw_path = str(match_row.get(field_name) or "").strip()
+        if not raw_path:
+            continue
+
+        file_path = Path(raw_path)
+        try:
+            if file_path.exists():
+                file_path.unlink()
+        except OSError as exc:
+            warnings.append(f"{field_name}: {exc}")
+
+    with get_db_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            DELETE FROM processed_matches
+            WHERE provider = ? AND match_id = ?
+            """,
+            (provider, str(match_id)),
+        )
+        connection.commit()
+
+    base_message = f"Se eliminó el partido procesado {provider}:{match_id} del historial local persistido."
+    if warnings:
+        return {
+            "ok": True,
+            "message": f"{base_message} Algunos archivos no pudieron borrarse: {'; '.join(warnings)}",
+        }
+
+    return {"ok": True, "message": base_message}

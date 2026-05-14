@@ -12,9 +12,9 @@ export function EventHistoryPanel({ entries, activeMatchId, onLoad }: EventHisto
     <section className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h3 className="text-base font-semibold text-slate-100">Historial local</h3>
+          <h3 className="text-base font-semibold text-slate-100">Historial local del navegador</h3>
           <p className="mt-1 text-sm text-slate-300">
-            Guarda los últimos partidos procesados para recuperarlos rápido en modo demo.
+            Guarda los últimos partidos abiertos en esta sesión para recuperarlos rápido sin volver a procesarlos.
           </p>
         </div>
         <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-emerald-200">

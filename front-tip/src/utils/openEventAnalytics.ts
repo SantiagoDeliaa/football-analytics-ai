@@ -245,7 +245,7 @@ export function generateOpenEventInsights(
 
   if ((metrics.field_tilt_index ?? 0) >= 70) {
     insights.push(
-      'El equipo seleccionado tuvo un Field Tilt alto, señal de dominio territorial en campo rival.',
+      'El equipo seleccionado mostró un dominio territorial alto, señal de presencia sostenida en campo rival.',
     )
   }
 

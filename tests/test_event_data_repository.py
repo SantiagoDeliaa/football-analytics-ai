@@ -127,3 +127,80 @@ def test_load_processed_match_payloads_returns_none_if_files_are_missing(monkeyp
     Path(row["metrics_path"]).unlink()
 
     assert repository.load_processed_match_payloads("statsbomb", "abc") is None
+
+
+def test_delete_processed_match_removes_row_and_files(monkeypatch, tmp_path):
+    _configure_temp_storage(monkeypatch, tmp_path)
+    saved = repository.save_processed_match(
+        provider="statsbomb",
+        match_id="to-delete",
+        match_metadata={},
+        raw_events=[{"id": "raw-1"}],
+        canonical_events=[{"event_id": "1"}],
+        metrics={"total_events": 1},
+    )
+
+    result = repository.delete_processed_match("statsbomb", "to-delete")
+
+    assert result["ok"] is True
+    assert repository.get_processed_match("statsbomb", "to-delete") is None
+    assert not Path(saved["raw_path"]).exists()
+    assert not Path(saved["canonical_path"]).exists()
+    assert not Path(saved["metrics_path"]).exists()
+
+
+def test_delete_processed_match_succeeds_when_some_json_is_missing(monkeypatch, tmp_path):
+    _configure_temp_storage(monkeypatch, tmp_path)
+    saved = repository.save_processed_match(
+        provider="statsbomb",
+        match_id="missing-json",
+        match_metadata={},
+        raw_events=[{"id": "raw-1"}],
+        canonical_events=[{"event_id": "1"}],
+        metrics={"total_events": 1},
+    )
+    Path(saved["canonical_path"]).unlink()
+
+    result = repository.delete_processed_match("statsbomb", "missing-json")
+
+    assert result["ok"] is True
+    assert repository.get_processed_match("statsbomb", "missing-json") is None
+    assert not Path(saved["raw_path"]).exists()
+    assert not Path(saved["metrics_path"]).exists()
+
+
+def test_delete_processed_match_returns_clear_status_when_match_is_missing(monkeypatch, tmp_path):
+    _configure_temp_storage(monkeypatch, tmp_path)
+
+    result = repository.delete_processed_match("statsbomb", "unknown")
+
+    assert result == {
+        "ok": False,
+        "message": "No se encontró el partido procesado statsbomb:unknown.",
+    }
+
+
+def test_delete_processed_match_does_not_remove_other_matches(monkeypatch, tmp_path):
+    _configure_temp_storage(monkeypatch, tmp_path)
+    repository.save_processed_match(
+        provider="statsbomb",
+        match_id="keep-me",
+        match_metadata={"competition_name": "A"},
+        raw_events=[{"id": "raw-keep"}],
+        canonical_events=[{"event_id": "keep"}],
+        metrics={"total_events": 1},
+    )
+    repository.save_processed_match(
+        provider="statsbomb",
+        match_id="delete-me",
+        match_metadata={"competition_name": "B"},
+        raw_events=[{"id": "raw-delete"}],
+        canonical_events=[{"event_id": "delete"}],
+        metrics={"total_events": 1},
+    )
+
+    result = repository.delete_processed_match("statsbomb", "delete-me")
+
+    assert result["ok"] is True
+    assert repository.get_processed_match("statsbomb", "delete-me") is None
+    assert repository.get_processed_match("statsbomb", "keep-me") is not None

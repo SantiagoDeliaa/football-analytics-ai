@@ -8,6 +8,7 @@ from api.schemas import CompetitionResponse
 from api.schemas import CoachAnswerResponse
 from api.schemas import CoachConfigStatusResponse
 from api.schemas import CoachDiagnosisResponse
+from api.schemas import DeleteProcessedMatchResponse
 from api.schemas import EventDataAnalyzeRequest
 from api.schemas import EventDataCoachQuestionRequest
 from api.schemas import EventDataCoachRequest
@@ -18,6 +19,7 @@ from api.schemas import PdfAnalysisResponse
 from api.services.event_data_service import answer_ai_coach_from_payload
 from api.services.event_data_service import analyze_match
 from api.services.event_data_service import analyze_pdf_report
+from api.services.event_data_service import delete_processed_history_entry
 from api.services.event_data_service import generate_ai_coach_diagnosis
 from api.services.event_data_service import get_ai_coach_status
 from api.services.event_data_service import list_api_football_countries
@@ -83,6 +85,11 @@ def get_history(limit: int = 20) -> list[dict]:
 @router.get("/history/{provider}/{match_id}", response_model=EventDataResultResponse)
 def get_history_entry(provider: str, match_id: str) -> dict:
     return load_processed_history_entry(provider=provider, match_id=match_id)
+
+
+@router.delete("/history/{provider}/{match_id}", response_model=DeleteProcessedMatchResponse)
+def delete_history_entry(provider: str, match_id: str) -> dict:
+    return delete_processed_history_entry(provider=provider, match_id=match_id)
 
 
 @router.get("/coach/status", response_model=CoachConfigStatusResponse)

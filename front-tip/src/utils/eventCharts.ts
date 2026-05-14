@@ -19,7 +19,7 @@ export function buildEventTypeDistribution(events: CanonicalEvent[], maxItems = 
   const counts = new Map<string, number>()
 
   events.forEach((event) => {
-    const key = event.event_type?.trim() || 'Otro'
+    const key = translateEventTypeLabel(event.event_type?.trim() || 'Otro')
     counts.set(key, (counts.get(key) ?? 0) + 1)
   })
 
@@ -107,4 +107,23 @@ function normalizeMetric(value: number | null | undefined) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
+}
+
+function translateEventTypeLabel(eventType: string) {
+  const translations: Record<string, string> = {
+    Pass: 'Pases',
+    Shot: 'Remates',
+    Goal: 'Goles',
+    Carry: 'Conducciones',
+    Dribble: 'Regates',
+    Duel: 'Duelos',
+    Interception: 'Intercepciones',
+    'Ball Recovery': 'Recuperaciones',
+    Foul: 'Faltas',
+    Clearance: 'Despejes',
+    Error: 'Errores',
+    Tackle: 'Entradas',
+  }
+
+  return translations[eventType] ?? eventType
 }

@@ -35,7 +35,7 @@ export function HistoryMatchHint({
           ) : null}
           {backendEntry ? (
             <span className="rounded-full border border-sky-300/30 bg-sky-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-sky-100">
-              Backend · {formatDateTime(backendEntry.updated_at)}
+              Persistido · {formatDateTime(backendEntry.updated_at)}
             </span>
           ) : null}
         </div>
@@ -57,7 +57,7 @@ export function HistoryMatchHint({
             onClick={() => onLoadBackend(backendEntry.provider, backendEntry.match_id)}
             type="button"
           >
-            Cargar historial backend
+            Cargar historial persistido
           </button>
         ) : null}
       </div>

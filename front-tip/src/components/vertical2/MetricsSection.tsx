@@ -17,18 +17,27 @@ interface MetricItem {
   title: string
   value: string
   subtitle?: string
+  summary?: string
+  whatItMeasures?: string
+  interpretation?: string
+  highMeaning?: string
+  lowMeaning?: string
+  limitations?: string
+  coachQuestion?: string
 }
 
 interface MetricsSectionProps {
   title: string
   items: MetricItem[]
   columns?: string
+  onAskCoach?: (question: string) => void
 }
 
 export function MetricsSection({
   title,
   items,
   columns = 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4',
+  onAskCoach,
 }: MetricsSectionProps) {
   const chartItems = buildMetricChartItems(items)
   const maxMetricValue = Math.max(...chartItems.map((item) => item.value), 1)
@@ -37,7 +46,7 @@ export function MetricsSection({
     labels: chartItems.map((item) => item.label),
     datasets: [
       {
-        label: 'Valor',
+        label: 'Valor relativo',
         data: chartItems.map((item) => item.value),
         backgroundColor: ['#34d399', '#60a5fa', '#a78bfa', '#f59e0b', '#22d3ee', '#f87171'],
         borderRadius: 10,
@@ -100,9 +109,8 @@ export function MetricsSection({
           <MetricInsightCard
             key={`${item.title}-${item.value}`}
             maxMetricValue={maxMetricValue}
-            subtitle={item.subtitle}
-            title={item.title}
-            value={item.value}
+            item={item}
+            onAskCoach={onAskCoach}
           />
         ))}
       </div>
@@ -111,19 +119,19 @@ export function MetricsSection({
 }
 
 function MetricInsightCard({
+  item,
   maxMetricValue,
-  subtitle,
-  title,
-  value,
+  onAskCoach,
 }: {
+  item: MetricItem
   maxMetricValue: number
-  subtitle?: string
-  title: string
-  value: string
+  onAskCoach?: (question: string) => void
 }) {
+  const { coachQuestion, highMeaning, interpretation, limitations, lowMeaning, subtitle, summary, title, value, whatItMeasures } =
+    item
   const numericValue = parseMetricNumber(value)
-  const intensity =
-    numericValue === null || maxMetricValue <= 0 ? null : Math.max(6, Math.min(100, (numericValue / maxMetricValue) * 100))
+  const relativeValue =
+    numericValue === null || maxMetricValue <= 0 ? null : Math.max(0, Math.min(100, (numericValue / maxMetricValue) * 100))
 
   return (
     <article className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
@@ -138,19 +146,34 @@ function MetricInsightCard({
           </span>
         ) : null}
       </div>
-      {intensity !== null ? (
-        <div className="mt-4 space-y-2">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.18em] text-slate-500">
-            <span>Intensidad relativa</span>
-            <span>{Math.round(intensity)}%</span>
+      {summary ? <p className="mt-3 text-sm leading-6 text-slate-300">{summary}</p> : null}
+      {relativeValue !== null ? (
+        <p className="mt-2 text-xs text-slate-500">
+          Referencia visual del bloque: {Math.round(relativeValue)}% respecto del valor más alto mostrado.
+        </p>
+      ) : null}
+      {whatItMeasures || interpretation || highMeaning || lowMeaning || limitations ? (
+        <details className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-200">
+            ¿Qué significa esta métrica?
+          </summary>
+          <div className="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+            {whatItMeasures ? <p><strong className="text-slate-100">Qué mide:</strong> {whatItMeasures}</p> : null}
+            {interpretation ? <p><strong className="text-slate-100">Cómo leerla:</strong> {interpretation}</p> : null}
+            {highMeaning ? <p><strong className="text-slate-100">Si está alta:</strong> {highMeaning}</p> : null}
+            {lowMeaning ? <p><strong className="text-slate-100">Si está baja:</strong> {lowMeaning}</p> : null}
+            {limitations ? <p><strong className="text-slate-100">Limitaciones:</strong> {limitations}</p> : null}
           </div>
-          <div className="h-2 rounded-full bg-slate-800">
-            <div
-              className="h-2 rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-violet-400"
-              style={{ width: `${intensity}%` }}
-            />
-          </div>
-        </div>
+        </details>
+      ) : null}
+      {coachQuestion && onAskCoach ? (
+        <button
+          className="mt-4 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm font-semibold text-sky-100 hover:bg-sky-500/20"
+          onClick={() => onAskCoach(coachQuestion)}
+          type="button"
+        >
+          Preguntar al AI Coach
+        </button>
       ) : null}
     </article>
   )

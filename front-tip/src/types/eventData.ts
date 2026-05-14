@@ -140,6 +140,11 @@ export interface ProcessedHistoryMatch {
   updated_at: string
 }
 
+export interface DeleteProcessedMatchResult {
+  ok: boolean
+  message: string
+}
+
 export interface CoachConversationMessage {
   role: 'user' | 'assistant'
   content: string

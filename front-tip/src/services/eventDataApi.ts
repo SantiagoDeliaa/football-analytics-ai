@@ -8,6 +8,7 @@ import type {
   CoachDiagnosisResult,
   CoachQuestionRequest,
   CoachRequest,
+  DeleteProcessedMatchResult,
   Competition,
   EventDataResult,
   IngestionStatus,
@@ -225,6 +226,18 @@ export async function loadProcessedHistoryEntry(
 ): Promise<EventDataResult> {
   return apiRequest<EventDataResult>(
     `/api/v1/event-data/history/${encodeURIComponent(provider)}/${encodeURIComponent(matchId)}`,
+  )
+}
+
+export async function deleteProcessedHistoryEntry(
+  provider: ProviderOption,
+  matchId: string,
+): Promise<DeleteProcessedMatchResult> {
+  return apiRequest<DeleteProcessedMatchResult>(
+    `/api/v1/event-data/history/${encodeURIComponent(provider)}/${encodeURIComponent(matchId)}`,
+    {
+      method: 'DELETE',
+    },
   )
 }
 

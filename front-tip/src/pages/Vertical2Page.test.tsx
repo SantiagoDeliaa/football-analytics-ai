@@ -80,6 +80,10 @@ describe('Vertical2Page', () => {
       status: { source: 'api' },
     })
     mockApi.fetchProcessedHistory.mockResolvedValue([])
+    mockApi.deleteProcessedHistoryEntry.mockResolvedValue({
+      ok: true,
+      message: 'Partido eliminado del historial persistido.',
+    })
     mockApi.fetchCoachStatus.mockResolvedValue({
       configured: true,
       api_key_configured: true,
@@ -189,6 +193,7 @@ describe('Vertical2Page', () => {
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
     await waitFor(() => expect(mockApi.loadEventData).toHaveBeenCalled())
+    expect(screen.queryByText(/vertical 2/i)).not.toBeInTheDocument()
     expect(await screen.findByText(/eventos analizados/i)).toBeInTheDocument()
     expect(screen.getAllByText('100').length).toBeGreaterThan(0)
     expect(screen.getByText(/panel técnico del provider/i)).toBeInTheDocument()
@@ -407,11 +412,47 @@ describe('Vertical2Page', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/historial backend/i)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /desde backend/i }))
+    expect(await screen.findByText(/historial local persistido/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /historial persistido/i }))
 
     await waitFor(() => expect(mockApi.loadProcessedHistoryEntry).toHaveBeenCalled())
     expect(mockApi.loadProcessedHistoryEntry).toHaveBeenCalledWith('StatsBomb Open Data', '99')
+  })
+
+  it('permite eliminar un partido del historial persistido con confirmación', async () => {
+    mockApi.fetchProcessedHistory.mockResolvedValue([
+      {
+        provider: 'StatsBomb Open Data',
+        match_id: '99',
+        competition_name: 'Liga',
+        season_name: '2025',
+        home_team: 'Argentina',
+        away_team: 'Francia',
+        match_date: '2025-01-01',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ])
+
+    render(
+      <MemoryRouter initialEntries={['/vertical2']}>
+        <EventDataProvider>
+          <Routes>
+            <Route element={<Vertical2Page />} path="/vertical2" />
+            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
+          </Routes>
+        </EventDataProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/historial local persistido/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^eliminar$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /eliminar definitivamente/i }))
+
+    await waitFor(() =>
+      expect(mockApi.deleteProcessedHistoryEntry).toHaveBeenCalledWith('StatsBomb Open Data', '99'),
+    )
+    expect(await screen.findByText(/partido eliminado del historial persistido/i)).toBeInTheDocument()
   })
 
   it('carga el flujo específico de API-Football al cambiar de provider', async () => {
@@ -546,5 +587,68 @@ describe('Vertical2Page', () => {
 
     await waitFor(() => expect(mockApi.askCoachQuestion).toHaveBeenCalled())
     expect(await screen.findByText(/respuesta táctica de prueba\./i)).toBeInTheDocument()
+  })
+
+  it('permite preguntar una métrica propietaria al AI Coach', async () => {
+    mockApi.loadEventData.mockResolvedValueOnce({
+      provider: 'StatsBomb Open Data',
+      match_id: '99',
+      competition_name: 'Liga',
+      season_name: '2025',
+      match_label: 'A vs B',
+      home_team: 'Argentina',
+      away_team: 'Francia',
+      match_date: '2025-01-01',
+      canonical_events: buildCanonicalEvents(100),
+      insights: ['Insight demo'],
+      raw_payload: [{ type: 'Pass', minute: 1, team: { name: 'Argentina' } }],
+      metrics: {
+        total_events: 100,
+        total_passes: 40,
+        total_shots: 10,
+        progressive_actions: 7,
+        final_third_actions: 12,
+        recoveries: 8,
+        total_under_pressure: 5,
+        total_xg: 1.3,
+        field_tilt_index: 72,
+        field_tilt_label: 'Alto',
+        directness_index: 60,
+        directness_label: 'Medio',
+        progressive_threat_index: 68,
+        progressive_threat_label: 'Alto',
+        recovery_height_index: 55,
+        recovery_height_label: 'Medio',
+        shot_quality_index: 48,
+        shot_quality_label: 'Medio',
+      },
+      raw_events_count: 100,
+      used_fallback_events: false,
+      events_status_message: '',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/vertical2']}>
+        <EventDataProvider>
+          <Routes>
+            <Route element={<Vertical2Page />} path="/vertical2" />
+            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
+          </Routes>
+        </EventDataProvider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
+
+    expect(await screen.findByText(/métricas propietarias/i)).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: /preguntar al ai coach/i })[0])
+
+    await waitFor(() => expect(mockApi.askCoachQuestion).toHaveBeenCalled())
+    expect(mockApi.askCoachQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: expect.stringMatching(/dominio territorial|verticalidad|amenaza|calidad de remate/i),
+      }),
+    )
   })
 })

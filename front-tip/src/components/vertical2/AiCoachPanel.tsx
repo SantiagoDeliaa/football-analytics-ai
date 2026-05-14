@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ErrorState } from '../common/ErrorState'
 import { LoadingState } from '../common/LoadingState'
 import { useAsync } from '../../hooks/useAsync'
@@ -25,14 +25,24 @@ interface AiCoachPanelProps {
   result: EventDataResult
   selectedTeam: string
   selectedPlayer: string
+  requestedQuestion?: string
+  onQuestionHandled?: () => void
 }
 
-export function AiCoachPanel({ result, selectedTeam, selectedPlayer }: AiCoachPanelProps) {
+export function AiCoachPanel({
+  result,
+  selectedTeam,
+  selectedPlayer,
+  requestedQuestion,
+  onQuestionHandled,
+}: AiCoachPanelProps) {
   const [diagnosis, setDiagnosis] = useState('')
   const [question, setQuestion] = useState('')
   const [conversation, setConversation] = useState<CoachConversationMessage[]>([])
   const [responseError, setResponseError] = useState<string>()
   const [suggestedQuestions, setSuggestedQuestions] = useState(DEFAULT_SUGGESTED_QUESTIONS)
+  const panelRef = useRef<HTMLElement | null>(null)
+  const lastHandledQuestionRef = useRef<string>()
   const statusTask = useAsync<CoachConfigStatus>()
   const diagnosisTask = useAsync<CoachDiagnosisResult>()
   const questionTask = useAsync<CoachAnswerResult>()
@@ -59,6 +69,7 @@ export function AiCoachPanel({ result, selectedTeam, selectedPlayer }: AiCoachPa
     setConversation([])
     setResponseError(undefined)
     setSuggestedQuestions(DEFAULT_SUGGESTED_QUESTIONS)
+    lastHandledQuestionRef.current = undefined
 
     void statusTask.run(fetchCoachStatus).then((status) => {
       if (!status) {
@@ -126,8 +137,38 @@ export function AiCoachPanel({ result, selectedTeam, selectedPlayer }: AiCoachPa
   const actionDisabled = !isConfigured || diagnosisTask.loading || questionTask.loading
   const visibleError = responseError || diagnosisTask.error || questionTask.error || statusTask.error
 
+  useEffect(() => {
+    const normalizedQuestion = requestedQuestion?.trim()
+    if (!normalizedQuestion) {
+      lastHandledQuestionRef.current = undefined
+      return
+    }
+
+    if (lastHandledQuestionRef.current === normalizedQuestion) {
+      return
+    }
+
+    panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setQuestion(normalizedQuestion)
+
+    if (statusTask.loading || questionTask.loading) {
+      return
+    }
+
+    lastHandledQuestionRef.current = normalizedQuestion
+
+    if (!isConfigured) {
+      onQuestionHandled?.()
+      return
+    }
+
+    void submitQuestion(normalizedQuestion).finally(() => {
+      onQuestionHandled?.()
+    })
+  }, [isConfigured, onQuestionHandled, questionTask.loading, requestedQuestion, statusTask.loading])
+
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
+    <section className="space-y-4 rounded-2xl border border-slate-700 bg-slate-900/70 p-4" ref={panelRef}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
           <h3 className="text-lg font-semibold text-slate-100">AI Tactical Coach</h3>

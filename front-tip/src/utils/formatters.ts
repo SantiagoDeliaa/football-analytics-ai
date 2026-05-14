@@ -44,12 +44,12 @@ export function buildPrimaryMetrics(metrics: MatchMetrics) {
 export function buildProprietaryMetrics(metrics: MatchMetrics) {
   return [
     {
-      title: 'Field Tilt',
+      title: 'Dominio territorial',
       value: formatMetricValue(metrics.field_tilt_index),
       subtitle: metrics.field_tilt_label,
     },
     {
-      title: 'Directness',
+      title: 'Verticalidad',
       value: formatMetricValue(metrics.directness_index),
       subtitle: metrics.directness_label,
     },
@@ -69,7 +69,7 @@ export function buildProprietaryMetrics(metrics: MatchMetrics) {
       subtitle: metrics.shot_quality_label,
     },
     {
-      title: 'Influencia jugador',
+      title: 'Influencia del jugador',
       value: formatMetricValue(metrics.player_influence_score),
       subtitle: metrics.player_influence_label,
     },

@@ -23,6 +23,7 @@ import { ProviderDebugPanel } from '../components/vertical2/ProviderDebugPanel'
 import { PdfUploadForm } from '../components/vertical2/PdfUploadForm'
 import { useAsync } from '../hooks/useAsync'
 import {
+  deleteProcessedHistoryEntry,
   fetchApiFootballCountries,
   fetchApiFootballFixtures,
   fetchApiFootballLeagues,
@@ -47,7 +48,6 @@ import type {
 } from '../types/eventData'
 import {
   buildPrimaryMetrics,
-  buildProprietaryMetrics,
 } from '../utils/formatters'
 import {
   extractPlayers,
@@ -58,6 +58,7 @@ import {
   calculateOpenEventMetrics,
   generateOpenEventInsights,
 } from '../utils/openEventAnalytics'
+import { buildProprietaryMetricItems } from '../utils/proprietaryMetrics'
 
 const MetricsSection = lazy(async () => {
   const module = await loadMetricsSection()
@@ -116,8 +117,11 @@ export function Vertical2Page() {
   const [apiFootballSelectedSeason, setApiFootballSelectedSeason] = useState('')
   const [pdfResult, setPdfResult] = useState<PdfAnalysisResult>()
   const [pdfError, setPdfError] = useState<string>()
+  const [coachQuestion, setCoachQuestion] = useState<string>()
   const [historyEntries, setHistoryEntries] = useState<EventHistoryEntry[]>(() => listEventHistoryEntries())
   const [processedHistoryEntries, setProcessedHistoryEntries] = useState<ProcessedHistoryMatch[]>([])
+  const [historyFeedback, setHistoryFeedback] = useState<string>()
+  const [deletingHistoryKey, setDeletingHistoryKey] = useState<string>()
   const { state, dispatch } = useEventDataContext()
   const competitionsTask = useAsync<Awaited<ReturnType<typeof fetchCompetitions>>>()
   const apiFootballCountriesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballCountries>>>()
@@ -128,6 +132,14 @@ export function Vertical2Page() {
   const pdfTask = useAsync<Awaited<ReturnType<typeof uploadPdfReport>>>()
   const processedHistoryTask = useAsync<Awaited<ReturnType<typeof fetchProcessedHistory>>>()
   const historyEntryTask = useAsync<Awaited<ReturnType<typeof loadProcessedHistoryEntry>>>()
+
+  async function refreshProcessedHistory() {
+    const payload = await processedHistoryTask.run(() => fetchProcessedHistory())
+    if (!payload) {
+      return
+    }
+    setProcessedHistoryEntries(payload)
+  }
 
   useEffect(() => {
     if (state.provider !== 'StatsBomb Open Data') {
@@ -223,12 +235,7 @@ export function Vertical2Page() {
   }, [apiFootballLeagues, apiFootballSelectedLeagueId, state.provider])
 
   useEffect(() => {
-    void processedHistoryTask.run(() => fetchProcessedHistory()).then((payload) => {
-      if (!payload) {
-        return
-      }
-      setProcessedHistoryEntries(payload)
-    })
+    void refreshProcessedHistory()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -356,31 +363,33 @@ export function Vertical2Page() {
       return []
     }
 
-    return buildProprietaryMetrics(selectionMetrics).filter((metric) =>
-      metric.title === 'Influencia jugador' ? state.selectedPlayer !== 'Todos' : true,
+    return buildProprietaryMetricItems(selectionMetrics).filter((metric) =>
+      metric.title === 'Influencia del jugador' ? state.selectedPlayer !== 'Todos' : true,
     )
   }, [selectionMetrics, state.selectedPlayer])
 
   const sourceLabel = useMemo(() => {
     if (!state.result) {
-      return 'API'
+      return 'Análisis actual'
     }
 
     const currentResult = state.result
     const isCurrentApiResult = apiTask.data?.match_id === currentResult.match_id
-    const isCurrentBackendHistory = historyEntryTask.data?.match_id === currentResult.match_id
     const existsInHistory = historyEntries.some((entry) => entry.result.match_id === currentResult.match_id)
+    const existsInPersistedHistory = processedHistoryEntries.some(
+      (entry) => entry.provider === currentResult.provider && entry.match_id === currentResult.match_id,
+    )
 
     if (!isCurrentApiResult && existsInHistory) {
       return 'Historial local'
     }
 
-    if (isCurrentBackendHistory) {
-      return 'Historial backend'
+    if (existsInPersistedHistory) {
+      return 'Historial persistido'
     }
 
-    return 'API'
-  }, [apiTask.data?.match_id, historyEntries, historyEntryTask.data?.match_id, state.result])
+    return 'Análisis actual'
+  }, [apiTask.data?.match_id, historyEntries, processedHistoryEntries, state.result])
 
   const matchingLocalHistoryEntry = useMemo(() => {
     if (!selectedMatchKey) {
@@ -514,6 +523,24 @@ export function Vertical2Page() {
     navigate(`/vertical2/match/${result.match_id}`)
   }
 
+  async function handleDeleteProcessedHistory(provider: ProviderOption, matchId: string) {
+    const entryKey = `${provider}-${matchId}`
+    setDeletingHistoryKey(entryKey)
+    setHistoryFeedback(undefined)
+
+    try {
+      const response = await deleteProcessedHistoryEntry(provider, matchId)
+      setHistoryFeedback(response.message)
+      await refreshProcessedHistory()
+    } catch (error) {
+      setHistoryFeedback(
+        error instanceof Error ? error.message : 'No se pudo eliminar el partido del historial persistido.',
+      )
+    } finally {
+      setDeletingHistoryKey(undefined)
+    }
+  }
+
   const pdfMatchInfo =
     pdfResult?.normalized_payload && typeof pdfResult.normalized_payload.match_info === 'object'
       ? (pdfResult.normalized_payload.match_info as Record<string, unknown>)
@@ -529,7 +556,7 @@ export function Vertical2Page() {
             Tactical Intelligence Platform
           </p>
           <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-100 md:text-4xl">
-            Vertical 2 · Data Analytics
+            Data Analytics
           </h1>
           <p className="mt-3 max-w-3xl text-sm text-slate-300 md:text-base">
             Resumen táctico desde reportes PDF y datos de proveedores API, con foco en lectura rápida,
@@ -541,8 +568,8 @@ export function Vertical2Page() {
       <Tabs
         onChange={(value: string) => setActiveTab(value as ActiveTab)}
         options={[
-          { value: 'pdf', label: 'Subir PDF' },
-          { value: 'api', label: 'Datos por API' },
+          { value: 'pdf', label: 'Load PDF' },
+          { value: 'api', label: 'API Event Data' },
         ]}
         value={activeTab}
       />
@@ -590,8 +617,8 @@ export function Vertical2Page() {
               <Suspense fallback={<LoadingState label="Cargando KPIs del partido..." />}>
                 <MetricsSection
                   columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
-                  items={buildProprietaryMetrics(pdfResult.metrics).filter(
-                    (metric) => metric.title !== 'Altura de recuperación' && metric.title !== 'Influencia jugador',
+                  items={buildProprietaryMetricItems(pdfResult.metrics).filter(
+                    (metric) => metric.title !== 'Altura de recuperación' && metric.title !== 'Influencia del jugador',
                   )}
                   title="KPIs del partido"
                 />
@@ -606,7 +633,7 @@ export function Vertical2Page() {
               </section>
               <details className="rounded-xl border border-slate-700 bg-slate-900/70 p-4">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-200">
-                  Preview del schema normalizado
+                  Vista previa del esquema normalizado
                 </summary>
                 <pre className="mt-3 max-h-64 overflow-auto rounded bg-slate-950 p-3 text-xs text-emerald-200">
                   {JSON.stringify(pdfResult.normalized_payload, null, 2)}
@@ -695,14 +722,17 @@ export function Vertical2Page() {
           <ProcessedHistoryPanel
             activeMatchId={state.result?.match_id}
             entries={processedHistoryEntries}
+            deletingKey={deletingHistoryKey}
+            feedbackMessage={historyFeedback}
             loading={processedHistoryTask.loading}
+            onDelete={handleDeleteProcessedHistory}
             onLoad={handleLoadProcessedHistory}
           />
 
           {apiTask.loading ? <LoadingState label="Cargando y normalizando eventos..." /> : null}
           {apiTask.error ? <ErrorState message={apiTask.error} onRetry={handleLoadData} /> : null}
           {historyEntryTask.error ? (
-            <ErrorState message={historyEntryTask.error} onRetry={() => void processedHistoryTask.run(() => fetchProcessedHistory())} />
+            <ErrorState message={historyEntryTask.error} onRetry={() => void refreshProcessedHistory()} />
           ) : null}
 
           {state.result ? (
@@ -730,6 +760,7 @@ export function Vertical2Page() {
                 <MetricsSection
                   columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
                   items={proprietaryMetrics}
+                  onAskCoach={setCoachQuestion}
                   title="Métricas propietarias"
                 />
               </Suspense>
@@ -754,6 +785,8 @@ export function Vertical2Page() {
 
               <AiCoachPanel
                 key={`${state.result.provider}-${state.result.match_id}-${state.selectedTeam}-${state.selectedPlayer}`}
+                onQuestionHandled={() => setCoachQuestion(undefined)}
+                requestedQuestion={coachQuestion}
                 result={state.result}
                 selectedPlayer={state.selectedPlayer}
                 selectedTeam={state.selectedTeam}

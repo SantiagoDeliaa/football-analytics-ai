@@ -3,6 +3,7 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /build/front-tip
 
 COPY front-tip/package*.json ./
+COPY front-tip/.npmrc ./
 RUN npm ci
 
 COPY front-tip/ ./

@@ -32,6 +32,7 @@ from src.services.open_event_metrics import calculate_open_event_metrics
 from src.services.open_event_normalizer import normalize_events_to_canonical
 from src.services.pdf_ingestion import ingest_pdf
 from src.services.proprietary_metrics import calculate_proprietary_metrics
+from src.services.storage.event_data_repository import delete_processed_match
 from src.services.storage.event_data_repository import get_processed_matches
 from src.services.storage.event_data_repository import load_processed_match_payloads
 from src.services.storage.event_data_repository import save_processed_match
@@ -337,6 +338,10 @@ def load_processed_history_entry(provider: str, match_id: str) -> dict[str, Any]
         "used_fallback_events": False,
         "events_status_message": "",
     }
+
+
+def delete_processed_history_entry(provider: str, match_id: str) -> dict[str, Any]:
+    return delete_processed_match(provider=provider, match_id=match_id)
 
 
 def get_ai_coach_status() -> dict[str, Any]:

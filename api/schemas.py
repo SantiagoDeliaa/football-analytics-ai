@@ -123,6 +123,11 @@ class ProcessedMatchSummaryResponse(BaseModel):
     updated_at: str
 
 
+class DeleteProcessedMatchResponse(BaseModel):
+    ok: bool
+    message: str
+
+
 class PdfAnalysisResponse(BaseModel):
     normalized_payload: dict[str, Any]
     metrics: dict[str, Any]

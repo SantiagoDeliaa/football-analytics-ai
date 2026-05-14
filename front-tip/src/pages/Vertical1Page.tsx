@@ -218,7 +218,7 @@ export function Vertical1Page() {
             Tactical Intelligence Platform
           </p>
           <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-slate-100 md:text-4xl">
-            Vertical 1 · Computer Vision
+            Computer Vision
           </h1>
           <p className="mt-3 max-w-3xl text-sm text-slate-300 md:text-base">
             Tracking y métricas tácticas desde video broadcast, con foco en salud del pipeline, lectura
