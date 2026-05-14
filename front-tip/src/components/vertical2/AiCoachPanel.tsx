@@ -42,7 +42,7 @@ export function AiCoachPanel({
   const [responseError, setResponseError] = useState<string>()
   const [suggestedQuestions, setSuggestedQuestions] = useState(DEFAULT_SUGGESTED_QUESTIONS)
   const panelRef = useRef<HTMLElement | null>(null)
-  const lastHandledQuestionRef = useRef<string>()
+  const lastHandledQuestionRef = useRef<string | undefined>(undefined)
   const statusTask = useAsync<CoachConfigStatus>()
   const diagnosisTask = useAsync<CoachDiagnosisResult>()
   const questionTask = useAsync<CoachAnswerResult>()

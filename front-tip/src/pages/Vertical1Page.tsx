@@ -79,10 +79,10 @@ export function Vertical1Page() {
   const [source, setSource] = useState<VideoSourceInput>(initialSource)
   const [config, setConfig] = useState<ComputerVisionConfig>(initialConfig)
   const [assets, setAssets] = useState<ComputerVisionModelAssets>({})
-  const [validationError, setValidationError] = useState<string>()
-  const [job, setJob] = useState<ComputerVisionJob>()
-  const [result, setResult] = useState<ComputerVisionResult>()
-  const [jobError, setJobError] = useState<string>()
+  const [validationError, setValidationError] = useState<string | undefined>(undefined)
+  const [job, setJob] = useState<ComputerVisionJob | undefined>(undefined)
+  const [result, setResult] = useState<ComputerVisionResult | undefined>(undefined)
+  const [jobError, setJobError] = useState<string | undefined>(undefined)
   const createJobTask = useAsync<ComputerVisionJob>()
   const busy = createJobTask.loading || job?.status === 'queued' || job?.status === 'running'
 
@@ -265,7 +265,7 @@ export function Vertical1Page() {
           <SessionOverview result={result} />
 
           <Tabs
-            onChange={setActiveTab}
+            onChange={(value: string) => setActiveTab(value as Vertical1Tab)}
             options={[
               { value: 'video', label: 'Video' },
               { value: 'stats', label: 'Estadísticas' },
