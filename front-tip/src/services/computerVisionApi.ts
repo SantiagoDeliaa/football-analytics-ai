@@ -1,9 +1,12 @@
 import { API_BASE_URL, ApiError } from './apiClient'
 import type {
   ComputerVisionConfig,
+  ComputerVisionHistoryDetail,
+  ComputerVisionHistoryResponse,
   ComputerVisionModelAssets,
   ComputerVisionJob,
   ComputerVisionResult,
+  DeleteComputerVisionHistoryResponse,
   VideoSourceInput,
 } from '../types/computerVision'
 
@@ -210,4 +213,41 @@ export async function getComputerVisionJob(jobId: string): Promise<ComputerVisio
   }
 
   return (await response.json()) as ComputerVisionJob
+}
+
+export async function getComputerVisionHistory(limit = 20): Promise<ComputerVisionHistoryResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/computer-vision/history?limit=${limit}`)
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new ApiError(message || 'No se pudo cargar el historial de procesamientos.', response.status)
+  }
+
+  return (await response.json()) as ComputerVisionHistoryResponse
+}
+
+export async function getComputerVisionHistoryItem(processingId: string): Promise<ComputerVisionHistoryDetail> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/computer-vision/history/${processingId}`)
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new ApiError(message || 'No se pudo cargar el procesamiento guardado.', response.status)
+  }
+
+  return (await response.json()) as ComputerVisionHistoryDetail
+}
+
+export async function deleteComputerVisionHistoryItem(
+  processingId: string,
+): Promise<DeleteComputerVisionHistoryResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/computer-vision/history/${processingId}`, {
+    method: 'DELETE',
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new ApiError(message || 'No se pudo eliminar el procesamiento guardado.', response.status)
+  }
+
+  return (await response.json()) as DeleteComputerVisionHistoryResponse
 }

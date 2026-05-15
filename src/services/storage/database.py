@@ -38,4 +38,25 @@ def initialize_event_data_db() -> None:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_videos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                processing_id TEXT NOT NULL UNIQUE,
+                job_id TEXT,
+                source_mode TEXT,
+                source_label TEXT,
+                video_name TEXT,
+                source_fingerprint TEXT NOT NULL,
+                config_hash TEXT NOT NULL,
+                status TEXT,
+                result_path TEXT,
+                stats_path TEXT,
+                video_path TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                UNIQUE(source_fingerprint, config_hash)
+            )
+            """
+        )
         connection.commit()

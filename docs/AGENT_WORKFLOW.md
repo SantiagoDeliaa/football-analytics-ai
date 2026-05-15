@@ -10,6 +10,8 @@
 - Mantener textos visibles en español.
 - No agregar dependencias sin justificación técnica clara.
 - No hardcodear secretos ni credenciales.
+- Si se agrega persistencia a Computer Vision, hacerlo en FastAPI + repository propio.
+- No tocar `process_video.py` ni `clip_video_simple.py` para resolver historial.
 
 ## Regla de arquitectura en Event Data
 Todo cambio debe respetar:
@@ -27,9 +29,19 @@ Todo cambio debe respetar:
 - Hacer cambios pequeños, reversibles y explicados.
 - Evitar cambios amplios no solicitados.
 - Priorizar compatibilidad con la demo actual.
+- Para persistencia local, usar SQLite + JSON sidecar y no guardar temporales de upload ni modelos custom.
 
 ## Pruebas mínimas
 - Ejecutar: `pytest tests/test_frontend_regression.py -k vertical2`
+
+## Testing
+- Backend: instalar con `python -m pip install -r requirements.txt`.
+- Backend: correr con `python -m pytest ...`.
+- Frontend: instalar con `cd front-tip && npm install`.
+- Frontend: requiere `Node >= 20.19.0`; recomendado `Node 22.12+`.
+- Frontend: correr con `npm run test -- --run`.
+- Typecheck frontend: `npx tsc -b`.
+- `tests/test_frontend_regression.py` pertenece al entorno Python/legacy-compat y no reemplaza los tests Vitest de `front-tip`.
 
 ## Mantenimiento de documentación
 - Si cambia modelo canónico: actualizar `docs/CANONICAL_EVENT_MODEL.md`.
