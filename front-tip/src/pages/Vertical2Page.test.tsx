@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { AiCoachChatProvider } from '../app/AiCoachChatContext'
 import { EventDataProvider, eventDataReducer, initialEventDataState } from '../app/EventDataContext'
+import { AiCoachChatWidget } from '../components/coach/AiCoachChatWidget'
 import { Vertical2Page } from './Vertical2Page'
 import * as api from '../services/eventDataApi'
 
@@ -28,10 +30,27 @@ function buildCanonicalEvents(count: number, team = 'Argentina') {
   }))
 }
 
+function renderVertical2Page(initialEntries = ['/vertical2']) {
+  render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <AiCoachChatProvider>
+        <EventDataProvider>
+          <AiCoachChatWidget />
+          <Routes>
+            <Route element={<Vertical2Page />} path="/vertical2" />
+            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
+          </Routes>
+        </EventDataProvider>
+      </AiCoachChatProvider>
+    </MemoryRouter>,
+  )
+}
+
 describe('Vertical2Page', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     window.localStorage.clear()
+    window.sessionStorage.clear()
     mockApi.fetchCompetitions.mockResolvedValue({
       competitions: [
         {
@@ -174,16 +193,7 @@ describe('Vertical2Page', () => {
   })
 
   it('carga métricas API al presionar "Cargar datos"', async () => {
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalledWith('StatsBomb Open Data'))
     await waitFor(() =>
@@ -247,16 +257,7 @@ describe('Vertical2Page', () => {
       ]),
     )
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     expect(await screen.findByText(/historial local del navegador/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /desde historial local/i }))
@@ -307,16 +308,7 @@ describe('Vertical2Page', () => {
       ]),
     )
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     expect(await screen.findByText(/partido ya disponible en historial/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /cargar historial local/i })).toBeInTheDocument()
@@ -404,16 +396,7 @@ describe('Vertical2Page', () => {
       },
     ])
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     expect(await screen.findByText(/historial local persistido/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /historial persistido/i }))
@@ -437,16 +420,7 @@ describe('Vertical2Page', () => {
       },
     ])
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     expect(await screen.findByText(/historial local persistido/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^eliminar$/i }))
@@ -459,16 +433,7 @@ describe('Vertical2Page', () => {
   })
 
   it('carga el flujo específico de API-Football al cambiar de provider', async () => {
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalledWith('StatsBomb Open Data'))
     fireEvent.change(screen.getByLabelText(/proveedor/i), { target: { value: 'API-Football' } })
@@ -515,16 +480,7 @@ describe('Vertical2Page', () => {
       events_status_message: '',
     })
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
     fireEvent.change(screen.getByLabelText(/proveedor/i), { target: { value: 'API-Football' } })
@@ -561,16 +517,7 @@ describe('Vertical2Page', () => {
   })
 
   it('permite generar diagnóstico y hacer preguntas al AI Coach', async () => {
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
     await waitFor(() =>
@@ -581,8 +528,9 @@ describe('Vertical2Page', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
-    expect(await screen.findByText(/ai tactical coach/i)).toBeInTheDocument()
     await waitFor(() => expect(mockApi.fetchCoachStatus).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /abrir ai coach/i }))
+    await waitFor(() => expect(screen.getByText(/a vs b \| statsbomb open data/i)).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: /generar diagnóstico táctico/i }))
 
@@ -598,7 +546,7 @@ describe('Vertical2Page', () => {
     expect(await screen.findByText(/respuesta táctica de prueba\./i)).toBeInTheDocument()
   })
 
-  it('permite preguntar una métrica propietaria al AI Coach', async () => {
+  it('permite disparar una pregunta sugerida desde el chat global con el contexto cargado', async () => {
     mockApi.loadEventData.mockResolvedValueOnce({
       provider: 'StatsBomb Open Data',
       match_id: '99',
@@ -636,16 +584,7 @@ describe('Vertical2Page', () => {
       events_status_message: '',
     })
 
-    render(
-      <MemoryRouter initialEntries={['/vertical2']}>
-        <EventDataProvider>
-          <Routes>
-            <Route element={<Vertical2Page />} path="/vertical2" />
-            <Route element={<Vertical2Page />} path="/vertical2/match/:matchId" />
-          </Routes>
-        </EventDataProvider>
-      </MemoryRouter>,
-    )
+    renderVertical2Page()
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
     await waitFor(() =>
@@ -665,7 +604,9 @@ describe('Vertical2Page', () => {
     await waitFor(() => expect(mockApi.askCoachQuestion).toHaveBeenCalled())
     expect(mockApi.askCoachQuestion).toHaveBeenCalledWith(
       expect.objectContaining({
-        question: expect.stringMatching(/dominio territorial|verticalidad|amenaza|calidad de remate/i),
+        matchId: '99',
+        provider: 'StatsBomb Open Data',
+        question: '¿Dónde generó más peligro?',
       }),
     )
   })

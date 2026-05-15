@@ -7,12 +7,12 @@ import {
   loadVisualizationGrid,
   scheduleModulePrefetch,
 } from '../app/modulePreload'
+import { useAiCoachChat } from '../app/AiCoachChatContext'
 import { useEventDataContext } from '../app/EventDataContext'
 import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
 import { Tabs } from '../components/common/Tabs'
 import { ApiFiltersPanel } from '../components/vertical2/ApiFiltersPanel'
-import { AiCoachPanel } from '../components/vertical2/AiCoachPanel'
 import { CanonicalPreview } from '../components/vertical2/CanonicalPreview'
 import { EventHistoryPanel } from '../components/vertical2/EventHistoryPanel'
 import { HistoryMatchHint } from '../components/vertical2/HistoryMatchHint'
@@ -117,12 +117,12 @@ export function Vertical2Page() {
   const [apiFootballSelectedSeason, setApiFootballSelectedSeason] = useState('')
   const [pdfResult, setPdfResult] = useState<PdfAnalysisResult>()
   const [pdfError, setPdfError] = useState<string>()
-  const [coachQuestion, setCoachQuestion] = useState<string>()
   const [historyEntries, setHistoryEntries] = useState<EventHistoryEntry[]>(() => listEventHistoryEntries())
   const [processedHistoryEntries, setProcessedHistoryEntries] = useState<ProcessedHistoryMatch[]>([])
   const [historyFeedback, setHistoryFeedback] = useState<string>()
   const [deletingHistoryKey, setDeletingHistoryKey] = useState<string>()
   const { state, dispatch } = useEventDataContext()
+  const { registerEventDataContext, requestQuestion } = useAiCoachChat()
   const competitionsTask = useAsync<Awaited<ReturnType<typeof fetchCompetitions>>>()
   const apiFootballCountriesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballCountries>>>()
   const apiFootballLeaguesTask = useAsync<Awaited<ReturnType<typeof fetchApiFootballLeagues>>>()
@@ -251,13 +251,23 @@ export function Vertical2Page() {
       return
     }
 
+    registerEventDataContext({
+      result: state.result,
+      selectedTeam: state.selectedTeam,
+      selectedPlayer: state.selectedPlayer,
+    })
     scheduleModulePrefetch(loadMetricsSection)
     scheduleModulePrefetch(loadVisualizationGrid)
 
     if (state.selectedPlayer !== 'Todos') {
       scheduleModulePrefetch(loadPlayerSpotlight)
     }
-  }, [state.result, state.selectedPlayer])
+  }, [
+    registerEventDataContext,
+    state.result,
+    state.selectedPlayer,
+    state.selectedTeam,
+  ])
 
   useEffect(() => {
     if (state.provider !== 'StatsBomb Open Data') {
@@ -760,7 +770,7 @@ export function Vertical2Page() {
                 <MetricsSection
                   columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
                   items={proprietaryMetrics}
-                  onAskCoach={setCoachQuestion}
+                  onAskCoach={requestQuestion}
                   title="Métricas propietarias"
                 />
               </Suspense>
@@ -782,15 +792,6 @@ export function Vertical2Page() {
                 <h3 className="text-lg font-semibold text-slate-100">Insights iniciales</h3>
                 <InsightsList insights={selectionInsights} />
               </section>
-
-              <AiCoachPanel
-                key={`${state.result.provider}-${state.result.match_id}-${state.selectedTeam}-${state.selectedPlayer}`}
-                onQuestionHandled={() => setCoachQuestion(undefined)}
-                requestedQuestion={coachQuestion}
-                result={state.result}
-                selectedPlayer={state.selectedPlayer}
-                selectedTeam={state.selectedTeam}
-              />
 
               <ProviderDebugPanel
                 history={{
