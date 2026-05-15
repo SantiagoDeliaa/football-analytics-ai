@@ -57,9 +57,9 @@ describe('eventCharts', () => {
   it('agrupa distribución por tipo de evento', () => {
     const distribution = buildEventTypeDistribution([...events])
 
-    expect(distribution.labels[0]).toBe('Pass')
+    expect(distribution.labels[0]).toBe('Pases')
     expect(distribution.values[0]).toBe(2)
-    expect(distribution.labels[1]).toBe('Shot')
+    expect(distribution.labels[1]).toBe('Remates')
   })
 
   it('normaliza puntos válidos para scatter de cancha', () => {

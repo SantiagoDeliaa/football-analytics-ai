@@ -606,7 +606,7 @@ describe('Vertical2Page', () => {
       expect.objectContaining({
         matchId: '99',
         provider: 'StatsBomb Open Data',
-        question: '¿Dónde generó más peligro?',
+        question: '¿Qué significa el dominio territorial de este equipo en este partido?',
       }),
     )
   })
