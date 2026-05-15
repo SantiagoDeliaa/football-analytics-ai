@@ -111,6 +111,11 @@ npm install
 npm run dev
 ```
 
+Requisito de Node para `front-tip`:
+
+- `Node >= 20.19.0`
+- recomendado: `Node 22.12+`
+
 Legacy Streamlit:
 
 ```bash
@@ -138,6 +143,63 @@ Validación local realizada sobre esta configuración:
 
 La guía paso a paso y los requisitos operativos quedaron documentados en `docs/HUGGINGFACE_DEPLOY.md`.
 
+## Testing
+
+### Backend
+
+Instalación de dependencias:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Comandos oficiales:
+
+```bash
+python -m pytest tests/test_api_computer_vision.py
+python -m pytest tests/test_api_event_data.py
+python -m pytest tests/test_computer_vision_repository.py
+python -m pytest tests/test_event_data_repository.py
+python -m pytest tests/test_frontend_regression.py -k vertical1
+python -m pytest tests/test_frontend_regression.py -k vertical2
+python -m pytest
+```
+
+Notas:
+
+- Los tests `test_frontend_regression.py` son regresiones Python sobre la capa legacy/compatibilidad, no Vitest del frontend React.
+- Si falla un import como `ModuleNotFoundError: fastapi`, el problema es del entorno Python local y no del código del test; volver a instalar `requirements.txt`.
+
+### Frontend
+
+Instalación de dependencias:
+
+```bash
+cd front-tip
+npm install
+```
+
+Versión mínima:
+
+- `Node >= 20.19.0`
+- recomendado: `Node 22.12+`
+
+Comandos oficiales:
+
+```bash
+cd front-tip
+npm run test -- --run
+npm run test -- --run src/pages/Vertical1Page.test.tsx
+npm run test -- --run src/pages/Vertical2Page.test.tsx
+npx tsc -b
+```
+
+Notas:
+
+- Con `Node 18.20.5`, `npm install` puede resolver paquetes, pero `Vitest` falla al arrancar por incompatibilidad real del stack `Vite/Vitest/rolldown`.
+- El `typecheck` con `npx tsc -b` puede seguir funcionando incluso cuando Vitest no arranca.
+- En Docker ya queda alineado porque el repo usa Node 22 en [Dockerfile](file:///c:/football-analytics-ai/Dockerfile) y [front-tip/Dockerfile](file:///c:/football-analytics-ai/front-tip/Dockerfile).
+
 ## Endpoints principales
 
 - `GET /api/v1/event-data/competitions`
@@ -149,6 +211,9 @@ La guía paso a paso y los requisitos operativos quedaron documentados en `docs/
 - `POST /api/v1/computer-vision/analyze`
 - `POST /api/v1/computer-vision/jobs`
 - `GET /api/v1/computer-vision/jobs/{job_id}`
+- `GET /api/v1/computer-vision/history`
+- `GET /api/v1/computer-vision/history/{processing_id}`
+- `DELETE /api/v1/computer-vision/history/{processing_id}`
 
 ## Estructura del Proyecto
 
@@ -203,9 +268,10 @@ Esos archivos quedan como contexto local y `data/` sigue ignorado por Git para n
 ## Verificación recomendada
 
 ```bash
-pytest
+python -m pytest
 cd front-tip
-npm run test
+npx tsc -b
+npm run test -- --run
 npm run build
 ```
 

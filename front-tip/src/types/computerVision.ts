@@ -206,6 +206,34 @@ export interface ComputerVisionJob {
   created_at: string
   updated_at: string
   video_name: string
+  processing_id?: string | null
   result?: ComputerVisionResult | null
   error?: string | null
+}
+
+export interface ComputerVisionHistoryItem {
+  processing_id: string
+  job_id?: string | null
+  source_mode: VideoSourceMode
+  source_label: string
+  video_name: string
+  status: string
+  created_at: string
+  updated_at: string
+  video_url?: string | null
+  stats_json_url?: string | null
+}
+
+export interface ComputerVisionHistoryResponse {
+  items: ComputerVisionHistoryItem[]
+}
+
+export interface ComputerVisionHistoryDetail {
+  metadata: ComputerVisionHistoryItem
+  result: ComputerVisionResult
+}
+
+export interface DeleteComputerVisionHistoryResponse {
+  ok: boolean
+  message: string
 }

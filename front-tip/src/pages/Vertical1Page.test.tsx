@@ -143,9 +143,30 @@ describe('Vertical1Page', () => {
       status: 'completed',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      processing_id: 'cv-1',
       video_name: 'clip.mp4',
       result,
       error: null,
+    })
+    mockComputerVisionApi.getComputerVisionHistory.mockResolvedValue({ items: [] })
+    mockComputerVisionApi.getComputerVisionHistoryItem.mockResolvedValue({
+      metadata: {
+        processing_id: 'cv-1',
+        job_id: 'job-1',
+        source_mode: 'upload',
+        source_label: 'clip.mp4',
+        video_name: 'clip.mp4',
+        status: 'completed',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        video_url: '/api/static/computer-vision/demo_processed.mp4',
+        stats_json_url: '/api/static/computer-vision/demo_stats.json',
+      },
+      result,
+    })
+    mockComputerVisionApi.deleteComputerVisionHistoryItem.mockResolvedValue({
+      ok: true,
+      message: 'Se eliminó el procesamiento guardado cv-1 del historial local.',
     })
 
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:demo')
@@ -169,6 +190,18 @@ describe('Vertical1Page', () => {
     expect(mockComputerVisionApi.createComputerVisionJob).not.toHaveBeenCalled()
   })
 
+  it('renderiza el historial vacío de procesamientos', async () => {
+    render(
+      <MemoryRouter>
+        <Vertical1Page />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText(/historial de procesamientos/i)).toBeInTheDocument()
+    expect(await screen.findByText(/todavía no hay procesamientos guardados/i)).toBeInTheDocument()
+    expect(mockComputerVisionApi.getComputerVisionHistory).toHaveBeenCalled()
+  })
+
   it('procesa un video y renderiza tabs de resultados', async () => {
     render(
       <MemoryRouter>
@@ -184,6 +217,7 @@ describe('Vertical1Page', () => {
 
     await waitFor(() => expect(mockComputerVisionApi.createComputerVisionJob).toHaveBeenCalled())
     await waitFor(() => expect(mockComputerVisionApi.getComputerVisionJob).toHaveBeenCalled())
+    await waitFor(() => expect(mockComputerVisionApi.getComputerVisionHistory).toHaveBeenCalled())
     expect(await screen.findByText(/duración analizada/i)).toBeInTheDocument()
     expect(screen.getByText('312')).toBeInTheDocument()
 
@@ -220,5 +254,67 @@ describe('Vertical1Page', () => {
 
     expect(await screen.findByText(/debés subir un modelo custom de jugadores/i)).toBeInTheDocument()
     expect(mockComputerVisionApi.createComputerVisionJob).not.toHaveBeenCalled()
+  })
+
+  it('carga un resultado guardado desde el historial', async () => {
+    mockComputerVisionApi.getComputerVisionHistory.mockResolvedValue({
+      items: [
+        {
+          processing_id: 'cv-1',
+          job_id: 'job-1',
+          source_mode: 'upload',
+          source_label: 'clip.mp4',
+          video_name: 'clip.mp4',
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          video_url: '/api/static/computer-vision/demo_processed.mp4',
+          stats_json_url: '/api/static/computer-vision/demo_stats.json',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <Vertical1Page />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /cargar resultado/i }))
+
+    await waitFor(() => expect(mockComputerVisionApi.getComputerVisionHistoryItem).toHaveBeenCalledWith('cv-1'))
+    expect(await screen.findByText(/se cargó el procesamiento guardado para clip\.mp4/i)).toBeInTheDocument()
+    expect(await screen.findByText(/duración analizada/i)).toBeInTheDocument()
+  })
+
+  it('elimina un procesamiento guardado con confirmación', async () => {
+    mockComputerVisionApi.getComputerVisionHistory.mockResolvedValue({
+      items: [
+        {
+          processing_id: 'cv-1',
+          job_id: 'job-1',
+          source_mode: 'upload',
+          source_label: 'clip.mp4',
+          video_name: 'clip.mp4',
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          video_url: '/api/static/computer-vision/demo_processed.mp4',
+          stats_json_url: '/api/static/computer-vision/demo_stats.json',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <Vertical1Page />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /^eliminar$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /eliminar definitivamente/i }))
+
+    await waitFor(() => expect(mockComputerVisionApi.deleteComputerVisionHistoryItem).toHaveBeenCalledWith('cv-1'))
+    expect(await screen.findByText(/se eliminó el procesamiento guardado cv-1/i)).toBeInTheDocument()
   })
 })

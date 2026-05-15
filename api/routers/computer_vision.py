@@ -6,10 +6,16 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 
 from api.schemas import ComputerVisionConfig
+from api.schemas import ComputerVisionHistoryDetail
+from api.schemas import ComputerVisionHistoryResponse
 from api.schemas import ComputerVisionJobResponse
 from api.schemas import ComputerVisionResultResponse
+from api.schemas import DeleteComputerVisionHistoryResponse
 from api.services.computer_vision_jobs import create_job
+from api.services.computer_vision_jobs import delete_history_entry
 from api.services.computer_vision_jobs import get_job
+from api.services.computer_vision_jobs import list_history
+from api.services.computer_vision_jobs import load_history_entry
 from api.services.computer_vision_service import analyze_video
 
 
@@ -68,6 +74,21 @@ def post_job(
         ball_model_file=ball_model_file,
         soccernet_path=soccernet_path,
     )
+
+
+@router.get("/history", response_model=ComputerVisionHistoryResponse)
+def get_history(limit: int = 20) -> dict:
+    return list_history(limit=limit)
+
+
+@router.get("/history/{processing_id}", response_model=ComputerVisionHistoryDetail)
+def get_history_entry(processing_id: str) -> dict:
+    return load_history_entry(processing_id)
+
+
+@router.delete("/history/{processing_id}", response_model=DeleteComputerVisionHistoryResponse)
+def delete_history(processing_id: str) -> dict:
+    return delete_history_entry(processing_id)
 
 
 @router.get("/jobs/{job_id}", response_model=ComputerVisionJobResponse)

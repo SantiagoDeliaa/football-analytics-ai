@@ -4,6 +4,7 @@ import { loadTimelineCharts, scheduleModulePrefetch } from '../app/modulePreload
 import { ErrorState } from '../components/common/ErrorState'
 import { LoadingState } from '../components/common/LoadingState'
 import { Tabs } from '../components/common/Tabs'
+import { ComputerVisionHistoryPanel } from '../components/vertical1/ComputerVisionHistoryPanel'
 import { ExportsPanel } from '../components/vertical1/ExportsPanel'
 import { PipelineHealthPanel } from '../components/vertical1/PipelineHealthPanel'
 import { ProcessingConfigPanel } from '../components/vertical1/ProcessingConfigPanel'
@@ -15,9 +16,16 @@ import {
 import { TeamComparisonTable } from '../components/vertical1/TeamComparisonTable'
 import { VideoSourcePanel } from '../components/vertical1/VideoSourcePanel'
 import { useAsync } from '../hooks/useAsync'
-import { createComputerVisionJob, getComputerVisionJob } from '../services/computerVisionApi'
+import {
+  createComputerVisionJob,
+  deleteComputerVisionHistoryItem,
+  getComputerVisionHistory,
+  getComputerVisionHistoryItem,
+  getComputerVisionJob,
+} from '../services/computerVisionApi'
 import type {
   ComputerVisionConfig,
+  ComputerVisionHistoryItem,
   ComputerVisionJob,
   ComputerVisionModelAssets,
   ComputerVisionResult,
@@ -83,7 +91,15 @@ export function Vertical1Page() {
   const [job, setJob] = useState<ComputerVisionJob | undefined>(undefined)
   const [result, setResult] = useState<ComputerVisionResult | undefined>(undefined)
   const [jobError, setJobError] = useState<string | undefined>(undefined)
+  const [historyEntries, setHistoryEntries] = useState<ComputerVisionHistoryItem[]>([])
+  const [historyFeedback, setHistoryFeedback] = useState<string | undefined>(undefined)
+  const [activeProcessingId, setActiveProcessingId] = useState<string | undefined>(undefined)
+  const [loadingHistoryProcessingId, setLoadingHistoryProcessingId] = useState<string | undefined>(undefined)
+  const [deletingHistoryProcessingId, setDeletingHistoryProcessingId] = useState<string | undefined>(undefined)
   const createJobTask = useAsync<ComputerVisionJob>()
+  const historyTask = useAsync<{ items: ComputerVisionHistoryItem[] }>()
+  const historyDetailTask = useAsync<{ metadata: ComputerVisionHistoryItem; result: ComputerVisionResult }>()
+  const deleteHistoryTask = useAsync<{ ok: boolean; message: string }>()
   const busy = createJobTask.loading || job?.status === 'queued' || job?.status === 'running'
 
   const previewUrl = useMemo(() => {
@@ -111,6 +127,10 @@ export function Vertical1Page() {
   }, [result])
 
   useEffect(() => {
+    void refreshHistory()
+  }, [])
+
+  useEffect(() => {
     if (!job || (job.status !== 'queued' && job.status !== 'running')) {
       return
     }
@@ -131,7 +151,12 @@ export function Vertical1Page() {
           if (nextJob.result) {
             setResult(nextJob.result)
             setJobError(undefined)
+            setActiveProcessingId(nextJob.processing_id ?? undefined)
+            setHistoryFeedback(
+              nextJob.processing_id ? 'El procesamiento quedó guardado en el historial local.' : undefined,
+            )
             setActiveTab('video')
+            void refreshHistory()
             return
           }
 
@@ -179,6 +204,13 @@ export function Vertical1Page() {
     return undefined
   }
 
+  async function refreshHistory() {
+    const history = await historyTask.run(() => getComputerVisionHistory())
+    if (history) {
+      setHistoryEntries(history.items)
+    }
+  }
+
   async function handleSubmit() {
     const nextError = validateSource()
     if (nextError) {
@@ -195,6 +227,8 @@ export function Vertical1Page() {
     setValidationError(undefined)
     setJobError(undefined)
     setResult(undefined)
+    setActiveProcessingId(undefined)
+    setHistoryFeedback(undefined)
 
     const createdJob = await createJobTask.run(() =>
       createComputerVisionJob({
@@ -208,6 +242,46 @@ export function Vertical1Page() {
       setJob(createdJob)
     }
   }
+
+  async function handleLoadHistory(processingId: string) {
+    setLoadingHistoryProcessingId(processingId)
+    const detail = await historyDetailTask.run(() => getComputerVisionHistoryItem(processingId))
+    setLoadingHistoryProcessingId(undefined)
+    if (!detail) {
+      return
+    }
+
+    setResult(detail.result)
+    setJob(undefined)
+    setJobError(undefined)
+    setValidationError(undefined)
+    setActiveProcessingId(processingId)
+    setActiveTab('video')
+    setHistoryFeedback(`Se cargó el procesamiento guardado para ${detail.metadata.video_name}.`)
+    setSource(
+      detail.metadata.source_mode === 'soccernet'
+        ? { source_mode: 'soccernet', soccernet_path: detail.metadata.source_label }
+        : { source_mode: 'upload' },
+    )
+  }
+
+  async function handleDeleteHistory(processingId: string) {
+    setDeletingHistoryProcessingId(processingId)
+    const response = await deleteHistoryTask.run(() => deleteComputerVisionHistoryItem(processingId))
+    setDeletingHistoryProcessingId(undefined)
+    if (!response) {
+      return
+    }
+
+    if (activeProcessingId === processingId) {
+      setActiveProcessingId(undefined)
+    }
+
+    setHistoryFeedback(response.message)
+    await refreshHistory()
+  }
+
+  const historyError = historyTask.error ?? historyDetailTask.error ?? deleteHistoryTask.error
 
   return (
     <section className="space-y-6">
@@ -247,6 +321,17 @@ export function Vertical1Page() {
         />
       </div>
 
+      <ComputerVisionHistoryPanel
+        activeProcessingId={activeProcessingId}
+        deletingProcessingId={deletingHistoryProcessingId}
+        entries={historyEntries}
+        feedbackMessage={historyFeedback}
+        loading={historyTask.loading}
+        loadingProcessingId={loadingHistoryProcessingId}
+        onDelete={handleDeleteHistory}
+        onLoad={handleLoadHistory}
+      />
+
       {validationError ? <ErrorState message={validationError} /> : null}
       {busy ? (
         <LoadingState
@@ -259,6 +344,7 @@ export function Vertical1Page() {
       ) : null}
       {createJobTask.error ? <ErrorState message={createJobTask.error} onRetry={handleSubmit} /> : null}
       {jobError ? <ErrorState message={jobError} onRetry={handleSubmit} /> : null}
+      {historyError ? <ErrorState message={historyError} onRetry={refreshHistory} /> : null}
 
       {result ? (
         <>

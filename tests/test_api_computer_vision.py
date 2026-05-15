@@ -229,3 +229,98 @@ def test_computer_vision_job_status_happy_path(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
+
+
+def test_computer_vision_history_list(monkeypatch):
+    monkeypatch.setattr(
+        "api.routers.computer_vision.list_history",
+        lambda limit=20: {
+            "items": [
+                {
+                    "processing_id": "cv-1",
+                    "job_id": "job-1",
+                    "source_mode": "upload",
+                    "source_label": "clip.mp4",
+                    "video_name": "clip.mp4",
+                    "status": "completed",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:05+00:00",
+                    "video_url": "/api/static/computer-vision/clip_job-1_processed.mp4",
+                    "stats_json_url": "/api/static/computer-vision/clip_job-1_processed_stats.json",
+                }
+            ]
+        },
+    )
+
+    response = client.get("/api/v1/computer-vision/history")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["processing_id"] == "cv-1"
+
+
+def test_computer_vision_history_detail(monkeypatch):
+    monkeypatch.setattr(
+        "api.routers.computer_vision.load_history_entry",
+        lambda processing_id: {
+            "metadata": {
+                "processing_id": processing_id,
+                "job_id": "job-1",
+                "source_mode": "upload",
+                "source_label": "clip.mp4",
+                "video_name": "clip.mp4",
+                "status": "completed",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:05+00:00",
+                "video_url": "/api/static/computer-vision/clip_job-1_processed.mp4",
+                "stats_json_url": "/api/static/computer-vision/clip_job-1_processed_stats.json",
+            },
+            "result": {
+                "source": "api",
+                "status_message": None,
+                "video_name": "clip.mp4",
+                "duration_seconds": 10,
+                "total_frames": 250,
+                "fps": 25,
+                "health_summary": {},
+                "formations": {"team1": {"most_common": "4-3-3"}, "team2": {"most_common": "4-4-2"}},
+                "metrics": {"team1": {}, "team2": {}},
+                "timeline": {
+                    "pressure_height": {"frames": [], "team1": [], "team2": []},
+                    "compactness": {"frames": [], "team1": [], "team2": []},
+                    "offensive_width": {"frames": [], "team1": [], "team2": []},
+                },
+                "possession": None,
+                "scouting": {
+                    "confidence": {
+                        "team1": {"label": "Alta", "score": 80},
+                        "team2": {"label": "Media", "score": 60},
+                    },
+                    "bullets": {"team1": ["A"], "team2": ["B"]},
+                },
+                "exports": {"json": True, "csv": True, "pdf": False},
+                "warnings": [],
+                "interpretation": ["ok"],
+            },
+        },
+    )
+
+    response = client.get("/api/v1/computer-vision/history/cv-1")
+
+    assert response.status_code == 200
+    assert response.json()["metadata"]["processing_id"] == "cv-1"
+    assert response.json()["result"]["video_name"] == "clip.mp4"
+
+
+def test_computer_vision_history_delete(monkeypatch):
+    monkeypatch.setattr(
+        "api.routers.computer_vision.delete_history_entry",
+        lambda processing_id: {
+            "ok": True,
+            "message": f"Se eliminó {processing_id}.",
+        },
+    )
+
+    response = client.delete("/api/v1/computer-vision/history/cv-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "message": "Se eliminó cv-1."}

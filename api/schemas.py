@@ -188,5 +188,33 @@ class ComputerVisionJobResponse(BaseModel):
     created_at: str
     updated_at: str
     video_name: str
+    processing_id: str | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
+
+
+class ComputerVisionHistoryItem(BaseModel):
+    processing_id: str
+    job_id: str | None = None
+    source_mode: str
+    source_label: str
+    video_name: str
+    status: str
+    created_at: str
+    updated_at: str
+    video_url: str | None = None
+    stats_json_url: str | None = None
+
+
+class ComputerVisionHistoryResponse(BaseModel):
+    items: list[ComputerVisionHistoryItem]
+
+
+class ComputerVisionHistoryDetail(BaseModel):
+    metadata: ComputerVisionHistoryItem
+    result: ComputerVisionResultResponse
+
+
+class DeleteComputerVisionHistoryResponse(BaseModel):
+    ok: bool
+    message: str

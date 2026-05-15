@@ -13,6 +13,7 @@ Permitir reutilización de partidos procesados sin redescarga completa.
   - `data/event_data/raw/api_football/`
   - `data/event_data/canonical/api_football/`
   - `data/event_data/metrics/api_football/`
+  - `data/computer_vision/results/`
 
 ## Fixtures locales de referencia
 - `data/tip_event_data.sqlite`
@@ -52,12 +53,44 @@ Se mantienen locales en el workspace y `data/` continua ignorado por Git para no
 - `updated_at`
 - `UNIQUE(provider, match_id)`
 
+## Tabla adicional
+`processed_videos`
+- `id`
+- `processing_id`
+- `job_id`
+- `source_mode`
+- `source_label`
+- `video_name`
+- `source_fingerprint`
+- `config_hash`
+- `status`
+- `result_path`
+- `stats_path`
+- `video_path`
+- `created_at`
+- `updated_at`
+- `UNIQUE(source_fingerprint, config_hash)`
+
 ## Funciones disponibles
 - `save_processed_match()`
 - `get_processed_matches()`
 - `get_processed_match()`
 - `load_processed_match_payloads()`
 - `has_processed_match()`
+- `save_processed_video()`
+- `get_processed_videos()`
+- `get_processed_video()`
+- `load_processed_video_payloads()`
+- `has_processed_video()`
+- `delete_processed_video()`
+
+## Computer Vision moderno
+- Reutiliza la misma SQLite del proyecto.
+- Guarda metadata en `processed_videos`.
+- Guarda el `result_payload` completo como JSON sidecar en `data/computer_vision/results/`.
+- Mantiene artefactos reales en `outputs/api/`.
+- No persiste archivos temporales ni modelos custom subidos para una corrida.
+- La UI React puede cargar un resultado previo sin reprocesar el video.
 
 ## Consideraciones
 - Persistencia liviana orientada a demo/MVP.

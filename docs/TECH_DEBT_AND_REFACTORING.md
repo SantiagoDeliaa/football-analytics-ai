@@ -29,3 +29,16 @@
 - Acoplamiento funcional por vivir todo en Streamlit.
 - Heurísticas de métricas sin calibración completa.
 - Persistencia local útil para demo, no para producción multiusuario.
+- Computer Vision moderno depende de jobs en memoria; el historial persistido reduce ese riesgo pero no reemplaza una cola real.
+
+## Estado de persistencia moderna
+- Event Data y Computer Vision ya comparten el patrón `SQLite + JSON sidecar`.
+- La persistencia de Computer Vision debe seguir fuera del pipeline pesado para no contaminar `process_video.py`.
+- Si el proyecto evoluciona, conviene unificar repositories y migraciones antes de pasar a PostgreSQL.
+
+## Legacy Streamlit
+- Streamlit legacy convive temporalmente con la arquitectura oficial `React + FastAPI`.
+- La UI oficial actual del proyecto es `front-tip/` consumiendo `api/`.
+- Streamlit queda como legacy y referencia funcional, no como superficie principal para nuevas features.
+- No agregar nuevas features en Streamlit salvo instrucción explícita.
+- Futuro recomendado: archivar o eliminar el legacy cuando React cubra completamente la experiencia objetivo.

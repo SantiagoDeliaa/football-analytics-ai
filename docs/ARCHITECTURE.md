@@ -66,6 +66,10 @@ Legacy Streamlit
 - El frontend nuevo consume `/api/v1/computer-vision/*`.
 - El backend puede crear jobs o devolver fallback controlado segun disponibilidad del pipeline real.
 - El dominio principal vive en `src/controllers/` y `src/utils/`.
+- La persistencia local moderna de Computer Vision usa la misma SQLite de demo en `data/tip_event_data.sqlite`.
+- Los resultados completos se guardan como JSON sidecar en `data/computer_vision/results/`.
+- Los artefactos reales del pipeline se mantienen en `outputs/api/` y se exponen por `/api/static/computer-vision/*`.
+- La persistencia se engancha al completar jobs en FastAPI; no modifica `process_video.py`.
 
 ## Vertical 2
 

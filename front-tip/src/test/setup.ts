@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom'
 import { vi } from 'vitest'
 
+Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+  value: vi.fn(),
+  writable: true,
+})
+
 vi.mock('react-chartjs-2', () => ({
   Bar: () => null,
   Doughnut: () => null,

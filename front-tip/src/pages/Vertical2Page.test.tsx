@@ -189,6 +189,9 @@ describe('Vertical2Page', () => {
     await waitFor(() =>
       expect(mockApi.fetchMatches).toHaveBeenCalledWith('StatsBomb Open Data', 1, 10),
     )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /cargar datos/i })).not.toBeDisabled(),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
@@ -255,7 +258,7 @@ describe('Vertical2Page', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/historial local/i)).toBeInTheDocument()
+    expect(await screen.findByText(/historial local del navegador/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /desde historial local/i }))
 
     expect(await screen.findByText(/resumen del partido/i)).toBeInTheDocument()
@@ -535,6 +538,9 @@ describe('Vertical2Page', () => {
       expect(mockApi.fetchApiFootballFixtures).toHaveBeenCalledWith({ leagueId: 10, season: 2024 }),
     )
     expect(await screen.findByText(/river plate vs boca juniors — 2024-05-12/i)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /cargar datos/i })).not.toBeDisabled(),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
@@ -569,6 +575,9 @@ describe('Vertical2Page', () => {
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
     await waitFor(() =>
       expect(mockApi.fetchMatches).toHaveBeenCalledWith('StatsBomb Open Data', 1, 10),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /cargar datos/i })).not.toBeDisabled(),
     )
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
@@ -639,9 +648,18 @@ describe('Vertical2Page', () => {
     )
 
     await waitFor(() => expect(mockApi.fetchCompetitions).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(mockApi.fetchMatches).toHaveBeenCalledWith('StatsBomb Open Data', 1, 10),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /cargar datos/i })).not.toBeDisabled(),
+    )
     fireEvent.click(screen.getByRole('button', { name: /cargar datos/i }))
 
-    expect(await screen.findByText(/métricas propietarias/i)).toBeInTheDocument()
+    await waitFor(() => expect(mockApi.loadEventData).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /preguntar al ai coach/i }).length).toBeGreaterThan(0),
+    )
     fireEvent.click(screen.getAllByRole('button', { name: /preguntar al ai coach/i })[0])
 
     await waitFor(() => expect(mockApi.askCoachQuestion).toHaveBeenCalled())

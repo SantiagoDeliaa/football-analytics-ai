@@ -39,6 +39,7 @@ data/tip_event_data.sqlite-*
 data/event_data/raw/
 data/event_data/canonical/
 data/event_data/metrics/
+data/computer_vision/
 
 # === Local environment variables / secrets ===
 .env

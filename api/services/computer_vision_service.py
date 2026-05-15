@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -27,7 +29,7 @@ def analyze_video(
     soccernet_path: str | None = None,
 ) -> dict[str, Any]:
     try:
-        source_path, video_name, cleanup_dir = prepare_job_source(
+        source_path, video_name, cleanup_dir, _ = prepare_job_source(
             source_mode=source_mode,
             upload_file=upload_file,
             soccernet_path=soccernet_path,
@@ -49,6 +51,7 @@ def analyze_video(
         video_name=video_name,
         config=config,
         cleanup_dir=cleanup_dir,
+        artifact_suffix=f"adhoc-{uuid.uuid4().hex[:8]}",
         runtime_assets=runtime_assets,
     )
 
@@ -59,11 +62,13 @@ def analyze_video_from_source(
     video_name: str,
     config: ComputerVisionConfig,
     cleanup_dir: Path | None,
+    artifact_suffix: str | None = None,
     runtime_assets: dict[str, Path | None] | None = None,
 ) -> dict[str, Any]:
     try:
         OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-        target_path = OUTPUT_ROOT / f"{Path(source_path).stem}_processed.mp4"
+        output_stem = _build_output_stem(video_name=video_name, artifact_suffix=artifact_suffix)
+        target_path = OUTPUT_ROOT / f"{output_stem}_processed.mp4"
         from src.controllers.process_video import process_video
 
         player_model = _resolve_player_model(config, runtime_assets)
@@ -116,7 +121,7 @@ def prepare_job_source(
     upload_file: UploadFile | None,
     soccernet_path: str | None,
     config: ComputerVisionConfig,
-) -> tuple[Path, str, Path | None]:
+) -> tuple[Path, str, Path | None, dict[str, Any]]:
     if source_mode == "upload":
         if upload_file is None or not upload_file.filename:
             raise HTTPException(
@@ -137,7 +142,11 @@ def prepare_job_source(
                 float(config.duration_seconds),
             )
             source_path = clipped_path
-        return source_path, upload_file.filename, temp_dir
+        return source_path, upload_file.filename, temp_dir, {
+            "source_mode": source_mode,
+            "source_label": upload_file.filename,
+            "reference_path": source_path,
+        }
 
     if source_mode == "soccernet":
         if not soccernet_path or len(soccernet_path.strip()) < 3:
@@ -164,8 +173,16 @@ def prepare_job_source(
                 float(config.start_seconds),
                 float(config.duration_seconds),
             )
-            return clipped_path, resolved.name, temp_dir
-        return resolved, resolved.name, None
+            return clipped_path, resolved.name, temp_dir, {
+                "source_mode": source_mode,
+                "source_label": str(soccernet_path),
+                "reference_path": resolved,
+            }
+        return resolved, resolved.name, None, {
+            "source_mode": source_mode,
+            "source_label": str(soccernet_path),
+            "reference_path": resolved,
+        }
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -460,6 +477,21 @@ def _artifact_url(path: Path | None) -> str | None:
     if path is None or not path.exists():
         return None
     return f"/api/static/computer-vision/{path.name}"
+
+
+def build_artifact_url(path: str | Path | None) -> str | None:
+    if not path:
+        return None
+    return _artifact_url(Path(path))
+
+
+def _build_output_stem(*, video_name: str, artifact_suffix: str | None) -> str:
+    stem = Path(video_name).stem or "clip"
+    if not artifact_suffix:
+        return stem
+
+    safe_suffix = re.sub(r"[^a-zA-Z0-9_.-]+", "-", artifact_suffix).strip("-")
+    return f"{stem}_{safe_suffix}" if safe_suffix else stem
 
 
 def _build_mock_result(video_name: str, config: ComputerVisionConfig, message: str) -> dict[str, Any]:
