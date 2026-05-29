@@ -5,7 +5,7 @@ from typing import Any
 import plotly.graph_objects as go
 
 from src.services.open_event_metrics import filter_analytical_events
-from src.utils.ui.theme import apply_plotly_dark_theme
+from src.services.presentation import apply_plotly_dark_theme
 
 
 def _apply_event_filters(

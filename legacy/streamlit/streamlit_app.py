@@ -1,17 +1,15 @@
+from __future__ import annotations
+
 import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-"""
-# Welcome to Streamlit!
-
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:.
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
-
-In the meantime, below is an example of what you can do with just a few lines of code:
-"""
+st.title("Legacy Streamlit Example")
+st.caption(
+    "Este archivo queda archivado solo como ejemplo historico del template inicial de Streamlit. "
+    "No forma parte del flujo principal React + FastAPI."
+)
 
 num_points = st.slider("Number of points in spiral", 1, 10000, 1100)
 num_turns = st.slider("Number of turns in spiral", 1, 300, 31)
@@ -23,18 +21,20 @@ radius = indices
 x = radius * np.cos(theta)
 y = radius * np.sin(theta)
 
-df = pd.DataFrame({
-    "x": x,
-    "y": y,
-    "idx": indices,
-    "rand": np.random.randn(num_points),
-})
+df = pd.DataFrame(
+    {
+        "x": x,
+        "y": y,
+        "idx": indices,
+        "rand": np.random.randn(num_points),
+    }
+)
 
-st.altair_chart(alt.Chart(df, height=700, width=700)
-    .mark_point(filled=True)
-    .encode(
+st.altair_chart(
+    alt.Chart(df, height=700, width=700).mark_point(filled=True).encode(
         x=alt.X("x", axis=None),
         y=alt.Y("y", axis=None),
         color=alt.Color("idx", legend=None, scale=alt.Scale()),
         size=alt.Size("rand", legend=None, scale=alt.Scale(range=[1, 150])),
-    ))
+    )
+)

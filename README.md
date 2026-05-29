@@ -11,7 +11,7 @@ license: mit
 
 # ⚽ Soccer Analytics AI - Proyecto Final
 
-**Plataforma de análisis táctico para fútbol con frontend React, backend FastAPI y legado Streamlit**
+**Plataforma de analisis tactico para futbol con frontend React, backend FastAPI y core analitico en Python**
 
 ---
 
@@ -19,10 +19,10 @@ license: mit
 
 Este repositorio concentra el estado integrado del proyecto:
 
-- `front-tip/` provee la experiencia visual moderna en React + Vite para `Vertical 1` y `Vertical 2`.
-- `api/` expone endpoints FastAPI para que el frontend nuevo consuma el motor actual sin depender de la UI de Streamlit.
-- `src/` conserva el dominio analítico existente, incluyendo Computer Vision, Event Data, AI Tactical Coach y persistencia local.
-- `app.py` y `src/streamlit_app.py` siguen disponibles como interfaz legacy y referencia funcional.
+- `front-tip/` provee la experiencia visual moderna en `React + TypeScript + Vite` para `Vertical 1` y `Vertical 2`.
+- `api/` expone `FastAPI` como backend HTTP principal para el frontend nuevo.
+- `src/` conserva el dominio analitico reutilizable: servicios, adapters, canonical models, metricas, insights y persistencia local.
+- `legacy/streamlit/` conserva la UI historica de Streamlit solo como referencia temporal y compatibilidad limitada.
 
 La prioridad actual es sostener una demo sólida con visual moderna, buena UX y compatibilidad con la lógica existente.
 
@@ -53,23 +53,20 @@ En este estado del repo, el despliegue objetivo para publicar la UI moderna qued
   - Docker Compose para entorno integrado
   - suite de tests backend/frontend/regresión
 
-## Arquitectura Actual
+## Arquitectura Principal
 
 ```text
-Home React
-├── Vertical 1 (Computer Vision)
-│   └── FastAPI -> src/controllers + src/utils
-└── Vertical 2 (Event Data)
-    └── FastAPI -> src/services
-        ├── Provider ingestion
-        ├── Canonical Event Model
-        ├── Metrics + insights
-        ├── Tactical visualizations
-        ├── AI Coach context builder
-        └── Local persistence
+React frontend (`front-tip/`)
+    ->
+FastAPI endpoints (`api/`)
+    ->
+Python services / adapters / canonical models (`src/`)
+    ->
+Metrics / insights / persistence
 
 Legacy / soporte:
-- Streamlit (`app.py`, `src/verticals/*`)
+- Streamlit archivado en `legacy/streamlit/`
+- UI legacy residual en `src/verticals/*` y `src/utils/ui/*`
 - Docs vivas en `docs/`
 - Reglas para agentes en `.trae/`
 ```
@@ -94,7 +91,7 @@ Nota importante:
 - `VITE_API_BASE_URL` debe resolver a `http://localhost:8000` desde el navegador.
 - El hostname `backend` sirve sólo para la red interna de Docker, no para una app Vite ejecutada en el browser del host.
 
-### Opción 2: Desarrollo local sin Docker
+### Opcion 2: Desarrollo local sin Docker
 
 Backend:
 
@@ -116,10 +113,11 @@ Requisito de Node para `front-tip`:
 - `Node >= 20.19.0`
 - recomendado: `Node 22.12+`
 
-Legacy Streamlit:
+Legacy Streamlit opcional:
 
 ```bash
-streamlit run app.py
+python -m pip install -r requirements-legacy.txt
+streamlit run legacy/streamlit/app.py
 ```
 
 ### Opción 3: Hugging Face Spaces
@@ -145,7 +143,7 @@ La guía paso a paso y los requisitos operativos quedaron documentados en `docs/
 
 ## Testing
 
-### Backend
+### Backend / Python
 
 Instalación de dependencias:
 
@@ -168,6 +166,7 @@ python -m pytest
 Notas:
 
 - Los tests `test_frontend_regression.py` son regresiones Python sobre la capa legacy/compatibilidad, no Vitest del frontend React.
+- `requirements.txt` ya no instala `streamlit`; si se necesita la UI legacy hay que usar `requirements-legacy.txt`.
 - Si falla un import como `ModuleNotFoundError: fastapi`, el problema es del entorno Python local y no del código del test; volver a instalar `requirements.txt`.
 
 ### Frontend
@@ -188,10 +187,9 @@ Comandos oficiales:
 
 ```bash
 cd front-tip
-npm run test -- --run
-npm run test -- --run src/pages/Vertical1Page.test.tsx
-npm run test -- --run src/pages/Vertical2Page.test.tsx
-npx tsc -b
+npm run test
+npm run lint
+npm run build
 ```
 
 Notas:
@@ -224,14 +222,16 @@ football-analytics-ai-recovery/
 ├── docs/                # documentación viva del producto y arquitectura
 ├── front-tip/           # frontend React + Vite + Tailwind
 ├── models/              # referencias/modelos pesados versionados selectivamente
-├── src/                 # dominio analítico legado y servicios compartidos
-├── tests/               # pruebas backend, regresión y soporte Streamlit
+├── legacy/              # superficies archivadas y compatibilidad temporal
+├── src/                 # dominio analitico y servicios compartidos
+├── tests/               # pruebas backend, frontend-compat y soporte legacy
 ├── .trae/               # contexto para agentes, skills y reglas
 ├── Dockerfile           # runtime final para Hugging Face Docker Space
 ├── Dockerfile.api
 ├── docker-compose.yml
-├── app.py
+├── app.py               # launcher de compatibilidad hacia legacy/streamlit
 ├── requirements.txt
+├── requirements-legacy.txt
 └── README.md
 ```
 
@@ -250,7 +250,7 @@ Eso asegura que cualquier agente o dev tenga contexto suficiente sobre:
 
 - visión de producto
 - límites de la demo
-- arquitectura híbrida actual
+- arquitectura principal React + FastAPI + src
 - pipeline canónico de Vertical 2
 - reglas de integración entre frontend nuevo y backend existente
 

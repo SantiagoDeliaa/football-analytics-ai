@@ -12,7 +12,7 @@ Dejar trazable el estado de integracion entre:
 
 ### Contexto y documentacion
 - `README.md` actualizado con arquitectura, arranque y puntos de entrada reales.
-- `docs/ARCHITECTURE.md` actualizado a arquitectura hibrida.
+- `docs/ARCHITECTURE.md` actualizado a arquitectura principal `React + FastAPI + src`, con Streamlit archivado como legacy.
 - `docs/LOCAL_PERSISTENCE.md` alineado con rutas reales de persistencia.
 - `tests/conftest.py` agregado para bootstrap comun del repo en pruebas Python.
 - Fixtures minimos restaurados en `data/` para conservar contexto de persistencia local, sin versionarlos en Git.

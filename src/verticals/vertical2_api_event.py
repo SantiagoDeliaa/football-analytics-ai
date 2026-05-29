@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
+from datetime import date
 import json
 from typing import Any, Callable
 
@@ -32,6 +34,23 @@ from src.services.open_event_visualizations import create_player_action_map
 from src.services.open_event_visualizations import create_progressive_actions_map
 from src.services.open_event_visualizations import create_recoveries_map
 from src.services.open_event_visualizations import create_shot_map
+from src.services.presentation import build_expected_metrics_table
+from src.services.presentation import build_player_stats_table
+from src.services.presentation import build_sportmonks_player_insights
+from src.services.presentation import build_team_stats_table
+from src.services.presentation import build_timeline_table
+from src.services.presentation import format_availability_status
+from src.services.presentation import format_sportmonks_match_title
+from src.services.providers.sportmonks_adapter import (
+    get_sportmonks_data_availability_for_fixture as adapter_get_sportmonks_data_availability_for_fixture,
+)
+from src.services.providers.sportmonks_adapter import (
+    get_sportmonks_fixtures_by_date as adapter_get_sportmonks_fixtures_by_date,
+)
+from src.services.providers.sportmonks_adapter import (
+    get_sportmonks_match_context as adapter_get_sportmonks_match_context,
+)
+from src.services.providers.sportmonks_client import is_sportmonks_configured
 from src.services.storage.database import initialize_event_data_db
 from src.services.storage.event_data_repository import get_processed_matches
 from src.services.storage.event_data_repository import has_processed_match
@@ -41,6 +60,7 @@ from src.utils.ui.ai_coach_panel import render_ai_coach_panel
 
 STORAGE_PROVIDER_STATSBOMB = "statsbomb"
 STORAGE_PROVIDER_API_FOOTBALL = "api_football"
+STORAGE_PROVIDER_SPORTMONKS = "sportmonks"
 SESSION_RESULT_KEY = "vertical2_api_event_result"
 
 
@@ -80,6 +100,38 @@ def _league_label(item: dict[str, Any]) -> str:
 def _fixture_label(item: dict[str, Any]) -> str:
     return str(item.get("display_name", "Partido"))
 
+
+def _date_input(label: str, value: str, key: str) -> str:
+    date_input_fn = getattr(st, "date_input", None)
+    if callable(date_input_fn):
+        try:
+            selected = date_input_fn(label, value=date.fromisoformat(value), key=key)
+            return selected.isoformat() if hasattr(selected, "isoformat") else str(selected)
+        except Exception:
+            pass
+    return st.text_input(label, value=value, key=key)
+
+
+def _object_value(item: Any, field_name: str, default: Any = None) -> Any:
+    if isinstance(item, dict):
+        return item.get(field_name, default)
+    return getattr(item, field_name, default)
+
+
+def _object_as_dict(item: Any) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return dict(item)
+    if is_dataclass(item):
+        return asdict(item)
+    return {}
+
+
+def _sportmonks_fixture_label(item: Any) -> str:
+    competition = str(_object_value(item, "competition_name", "") or "Competición no informada")
+    match_date = str(_object_value(item, "match_date", "") or "Fecha no informada")
+    status = str(_object_value(item, "status", "") or "Estado no informado")
+    fixture_id = str(_object_value(item, "provider_match_id", "") or _object_value(item, "match_id", "") or "")
+    return f"{format_sportmonks_match_title(item)} | {competition} | {match_date} | {status} | #{fixture_id}"
 
 def _identity_cache_decorator(*args: Any, **kwargs: Any):
     def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -148,6 +200,21 @@ def _cached_api_fixture_statistics(fixture_id: int | str) -> list[dict[str, Any]
 @_cache_decorator(ttl=900, show_spinner=False)
 def _cached_api_fixture_players(fixture_id: int | str) -> list[dict[str, Any]]:
     return get_api_football_fixture_players(fixture_id)
+
+
+@_cache_decorator(ttl=300, show_spinner=False)
+def _cached_sportmonks_fixtures_by_date(match_date: str) -> dict[str, Any]:
+    return adapter_get_sportmonks_fixtures_by_date(match_date)
+
+
+@_cache_decorator(ttl=300, show_spinner=False)
+def _cached_sportmonks_match_context(fixture_id: str) -> dict[str, Any]:
+    return adapter_get_sportmonks_match_context(fixture_id)
+
+
+@_cache_decorator(ttl=300, show_spinner=False)
+def _cached_sportmonks_availability(fixture_id: str) -> dict[str, Any]:
+    return adapter_get_sportmonks_data_availability_for_fixture(fixture_id)
 
 
 def _extract_teams_from_canonical(canonical_events: list[dict[str, Any]]) -> list[str]:
@@ -279,11 +346,13 @@ def _render_environment_config_status(show_technical_info: bool = False) -> None
 
     ai_status = get_ai_coach_config_status()
     api_status = get_api_football_config_status()
+    sportmonks_configured = is_sportmonks_configured()
 
     with st.expander("Estado técnico de variables de entorno"):
         st.json(
             {
                 "API_FOOTBALL_KEY": {"configured": bool(api_status.get("configured"))},
+                "SPORTMONKS_API_KEY": {"configured": sportmonks_configured},
                 "AI_COACH_API_KEY": {"configured": bool(ai_status.get("api_key_configured"))},
                 "AI_COACH_MODEL": {
                     "configured": bool(ai_status.get("model_configured")),
@@ -1000,6 +1069,304 @@ def _render_api_football_provider(show_technical_info: bool = False) -> None:
     _render_common_event_dashboard(result, selected_team, selected_player, show_technical_info=show_technical_info)
 
 
+def _render_sportmonks_expected_metrics(expected_metrics: list[Any]) -> None:
+    st.markdown("### Rendimiento esperado")
+    if not expected_metrics:
+        st.info("No hay métricas esperadas disponibles para este partido.")
+        return
+
+    metric_rows = build_expected_metrics_table(expected_metrics)
+    team_names = [str(_object_value(item, "team_name", "") or f"Equipo {index + 1}") for index, item in enumerate(expected_metrics)]
+    for row in metric_rows:
+        st.markdown(f"**{row.get('Métrica', 'Métrica')}**")
+        metric_columns = st.columns(max(1, len(team_names)))
+        for index, team_name in enumerate(team_names):
+            with metric_columns[index]:
+                st.metric(team_name, row.get(team_name, "No disponible"))
+
+
+def _render_sportmonks_timeline(timeline_events: list[Any]) -> None:
+    st.markdown("### Timeline de eventos")
+    if not timeline_events:
+        st.info("No hay eventos principales disponibles para este partido.")
+        return
+
+    event_filter = _selectbox(
+        "Filtro de timeline",
+        ["Todos", "Goles", "Tarjetas", "Cambios", "VAR"],
+        key="vertical2_sportmonks_timeline_filter",
+    )
+    timeline_rows = build_timeline_table(timeline_events, event_filter=event_filter)
+    if not timeline_rows:
+        st.info("No hay eventos principales disponibles para el filtro seleccionado.")
+        return
+    st.dataframe(timeline_rows, use_container_width=True, hide_index=True)
+
+
+def _render_sportmonks_lineups(lineups: list[Any]) -> None:
+    st.markdown("### Lineups")
+    if not lineups:
+        st.info("No hay alineaciones disponibles para este partido.")
+        return
+
+    lineup_tabs = st.tabs([str(_object_value(item, "team_name", "") or f"Equipo {index + 1}") for index, item in enumerate(lineups)])
+    for index, lineup in enumerate(lineups):
+        with lineup_tabs[index]:
+            st.caption(f"Formación: {_object_value(lineup, 'formation', 'No disponible') or 'No disponible'}")
+            st.caption(f"Coach: {_object_value(lineup, 'coach', 'No disponible') or 'No disponible'}")
+            starters = _object_value(lineup, "starters", []) or []
+            substitutes = _object_value(lineup, "substitutes", []) or []
+            st.markdown("**Titulares**")
+            if starters:
+                st.dataframe(
+                    [
+                        {
+                            "Dorsal": item.get("jersey_number", "No disponible"),
+                            "Jugador": item.get("player_name", "No disponible"),
+                            "Posición": item.get("position", "No disponible"),
+                            "Minutos": item.get("minutes_played", "No disponible"),
+                            "Rating": item.get("rating", "No disponible"),
+                        }
+                        for item in starters
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No hay titulares disponibles para este equipo.")
+            st.markdown("**Suplentes**")
+            if substitutes:
+                st.dataframe(
+                    [
+                        {
+                            "Dorsal": item.get("jersey_number", "No disponible"),
+                            "Jugador": item.get("player_name", "No disponible"),
+                            "Posición": item.get("position", "No disponible"),
+                            "Minutos": item.get("minutes_played", "No disponible"),
+                            "Rating": item.get("rating", "No disponible"),
+                        }
+                        for item in substitutes
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No hay suplentes disponibles para este equipo.")
+
+
+def _render_sportmonks_team_stats(team_stats: list[Any]) -> None:
+    st.markdown("### Estadísticas de equipo")
+    if not team_stats:
+        st.info("No hay estadísticas de equipo disponibles para este partido.")
+        return
+
+    stats_tabs = st.tabs([str(_object_value(item, "team_name", "") or f"Equipo {index + 1}") for index, item in enumerate(team_stats)])
+    for index, item in enumerate(team_stats):
+        with stats_tabs[index]:
+            st.dataframe(build_team_stats_table(item), use_container_width=True, hide_index=True)
+
+
+def _render_sportmonks_player_analysis(player_stats: list[Any]) -> None:
+    st.markdown("### Análisis de jugador")
+    if not player_stats:
+        st.info("No hay estadísticas de jugador disponibles para este partido.")
+        return
+
+    selected_player = _selectbox(
+        "Jugador para análisis",
+        player_stats,
+        key="vertical2_sportmonks_player_selector",
+        format_func=lambda item: str(_object_value(item, "player_name", "Jugador")) + " — " + str(_object_value(item, "team_name", "Equipo")),
+    )
+    info_columns = st.columns(6)
+    with info_columns[0]:
+        st.metric("Jugador", str(_object_value(selected_player, "player_name", "No disponible")))
+    with info_columns[1]:
+        st.metric("Equipo", str(_object_value(selected_player, "team_name", "No disponible")))
+    with info_columns[2]:
+        st.metric("Posición", str(_object_value(selected_player, "position", "No disponible") or "No disponible"))
+    with info_columns[3]:
+        st.metric("Dorsal", str(_object_value(selected_player, "jersey_number", "No disponible") or "No disponible"))
+    with info_columns[4]:
+        st.metric("Minutos", str(_object_value(selected_player, "minutes_played", "No disponible") or "No disponible"))
+    with info_columns[5]:
+        st.metric("Rating", _render_stat_value(_object_value(selected_player, "rating")))
+
+    stats_table = build_player_stats_table(selected_player)
+    if stats_table:
+        st.dataframe(stats_table, use_container_width=True, hide_index=True)
+
+    insights = build_sportmonks_player_insights(selected_player)
+    if insights:
+        st.markdown("**Insights simples**")
+        for insight in insights:
+            st.markdown(f"- {insight}")
+
+
+def _render_sportmonks_availability(availability: Any) -> None:
+    with st.expander("Fuentes y calidad de datos"):
+        availability_rows = [
+            {"Campo": "Fuente", "Estado": "Sportmonks"},
+            {"Campo": "Timeline de eventos", "Estado": format_availability_status(_object_value(availability, "has_event_timeline", False))},
+            {"Campo": "Lineups", "Estado": format_availability_status(_object_value(availability, "has_lineups", False))},
+            {"Campo": "Estadísticas de equipo", "Estado": format_availability_status(_object_value(availability, "has_team_stats", False))},
+            {"Campo": "Estadísticas de jugador", "Estado": format_availability_status(_object_value(availability, "has_player_stats", False))},
+            {"Campo": "xG", "Estado": format_availability_status(_object_value(availability, "has_xg", False))},
+            {"Campo": "xGoT", "Estado": format_availability_status(_object_value(availability, "has_xgot", False))},
+            {"Campo": "xPTS", "Estado": format_availability_status(_object_value(availability, "has_xpts", False))},
+            {"Campo": "Coordenadas de eventos", "Estado": format_availability_status(_object_value(availability, "has_coordinates", False))},
+            {"Campo": "Tracking", "Estado": format_availability_status(_object_value(availability, "has_tracking", False))},
+        ]
+        st.dataframe(availability_rows, use_container_width=True, hide_index=True)
+        st.warning(
+            "Este partido no incluye coordenadas de eventos desde Sportmonks. "
+            "Por eso los mapas tácticos espaciales no están disponibles."
+        )
+
+
+def _render_sportmonks_visualization_notice(availability: Any) -> None:
+    st.markdown("### Visualizaciones tácticas")
+    if not bool(_object_value(availability, "has_coordinates", False)):
+        st.info(
+            "Las visualizaciones de cancha no están disponibles para Sportmonks con los datos actuales "
+            "porque no se confirmaron coordenadas de eventos."
+        )
+        return
+    st.info("La visualización espacial para Sportmonks quedará disponible cuando se confirme soporte estable de coordenadas.")
+
+
+def _render_sportmonks_match_center(result: dict[str, Any], show_technical_info: bool = False) -> None:
+    context = result.get("sportmonks_context", {}) or {}
+    match = context.get("match")
+    expected_metrics = context.get("expected_metrics", []) or []
+    timeline_events = context.get("timeline_events", []) or []
+    lineups = context.get("lineups", []) or []
+    team_stats = context.get("team_stats", []) or []
+    player_stats = context.get("player_stats", []) or []
+    availability = context.get("availability")
+
+    if match is None:
+        st.warning("No se pudo construir el Match Center técnico para este partido.")
+        return
+
+    st.markdown("### Sportmonks — Match Center técnico")
+    st.subheader(format_sportmonks_match_title(match))
+    st.caption(
+        f"{_object_value(match, 'competition_name', 'Competición no informada') or 'Competición no informada'} | "
+        f"{_object_value(match, 'season_name', 'Temporada no informada') or 'Temporada no informada'}"
+    )
+
+    st.markdown("### Resumen del partido")
+    summary_columns = st.columns(5)
+    result_text = format_sportmonks_match_title(match)
+    with summary_columns[0]:
+        st.metric("Resultado", result_text)
+    with summary_columns[1]:
+        st.metric("Estado", str(_object_value(match, "status", "No disponible") or "No disponible"))
+    with summary_columns[2]:
+        st.metric("Competición", str(_object_value(match, "competition_name", "No disponible") or "No disponible"))
+    with summary_columns[3]:
+        venue_text = str(_object_value(match, "venue_name", "No disponible") or "No disponible")
+        if _object_value(match, "venue_city"):
+            venue_text = f"{venue_text} ({_object_value(match, 'venue_city')})"
+        st.metric("Estadio", venue_text)
+    with summary_columns[4]:
+        st.metric("Fecha", str(_object_value(match, "match_date", "No disponible") or "No disponible"))
+
+    _render_sportmonks_expected_metrics(expected_metrics)
+    _render_sportmonks_timeline(timeline_events)
+    _render_sportmonks_lineups(lineups)
+    _render_sportmonks_team_stats(team_stats)
+    _render_sportmonks_player_analysis(player_stats)
+    _render_sportmonks_availability(availability)
+    _render_sportmonks_visualization_notice(availability)
+
+    if show_technical_info:
+        with st.expander("Vista técnica del Match Center (canónico)"):
+            st.json(
+                {
+                    "match": _object_as_dict(match),
+                    "availability": _object_as_dict(availability),
+                    "timeline_events": [_object_as_dict(item) for item in timeline_events[:20]],
+                    "lineups": [_object_as_dict(item) for item in lineups[:2]],
+                }
+            )
+
+
+def _render_sportmonks_provider(show_technical_info: bool = False) -> None:
+    st.markdown("#### Configuración de Sportmonks")
+    if not is_sportmonks_configured():
+        st.warning(
+            "Sportmonks no está configurado. Agregá SPORTMONKS_API_KEY en el archivo .env "
+            "o en las variables de entorno para usar este proveedor."
+        )
+        return
+
+    default_date = date.today().isoformat()
+    selected_date = _date_input("Fecha del partido", default_date, key="vertical2_sportmonks_date")
+    if st.button("Buscar partidos", key="vertical2_sportmonks_search_button", use_container_width=True):
+        fixtures_response = _cached_sportmonks_fixtures_by_date(selected_date)
+        st.session_state["vertical2_sportmonks_fixture_search"] = {
+            "date": selected_date,
+            "response": fixtures_response,
+        }
+        st.rerun()
+
+    search_state = st.session_state.get("vertical2_sportmonks_fixture_search", {})
+    search_response = search_state.get("response", {}) if search_state.get("date") == selected_date else {}
+    fixtures = search_response.get("data", []) or []
+    if not fixtures:
+        if search_response.get("ok") is False:
+            st.error(f"No se pudo cargar información desde Sportmonks: {search_response.get('error')}")
+        else:
+            st.info("Seleccioná una fecha y presioná 'Buscar partidos' para cargar partidos disponibles.")
+        return
+
+    selected_fixture = _selectbox(
+        "Partido",
+        fixtures,
+        key="vertical2_sportmonks_fixture",
+        format_func=_sportmonks_fixture_label,
+    )
+    current_match_key = str(_object_value(selected_fixture, "provider_match_id", "") or "")
+
+    st.caption(f"Fixture interno Sportmonks: #{current_match_key}")
+
+    if st.button("Cargar análisis del partido", key="vertical2_sportmonks_load_button", use_container_width=True):
+        context_response = _cached_sportmonks_match_context(current_match_key)
+        if context_response.get("ok"):
+            data = context_response.get("data", {}) or {}
+            availability_response = _cached_sportmonks_availability(current_match_key)
+            availability = data.get("availability")
+            if availability_response.get("ok") and availability_response.get("data") is not None:
+                availability = availability_response.get("data")
+                data["availability"] = availability
+            match = data.get("match")
+            st.session_state[SESSION_RESULT_KEY] = {
+                "provider": STORAGE_PROVIDER_SPORTMONKS,
+                "match_id": current_match_key,
+                "competition_name": _object_value(match, "competition_name", "") if match else "",
+                "season_name": _object_value(match, "season_name", "") if match else "",
+                "home_team": _object_value(match, "home_team_name", "") if match else "",
+                "away_team": _object_value(match, "away_team_name", "") if match else "",
+                "match_date": _object_value(match, "match_date", "") if match else "",
+                "match_label": format_sportmonks_match_title(match) if match else "Partido",
+                "raw_payload": {},
+                "canonical_events": [],
+                "sportmonks_context": data,
+            }
+            st.rerun()
+            return
+        st.error(f"No se pudo cargar información desde Sportmonks: {context_response.get('error')}")
+
+    result = st.session_state.get(SESSION_RESULT_KEY)
+    if not _result_matches(result, STORAGE_PROVIDER_SPORTMONKS, current_match_key):
+        st.info("Buscá partidos y luego presioná 'Cargar análisis del partido' para ver el Match Center técnico.")
+        return
+
+    _render_sportmonks_match_center(result, show_technical_info=show_technical_info)
+
+
 def render_vertical2_api_event() -> None:
     st.subheader("API Event Data")
     st.caption("Conectá datos de eventos desde proveedores externos para generar métricas tácticas propietarias.")
@@ -1012,7 +1379,7 @@ def render_vertical2_api_event() -> None:
 
     provider = _selectbox(
         "Proveedor de datos",
-        ["StatsBomb Open Data", "API-Football"],
+        ["StatsBomb Open Data", "API-Football", "Sportmonks"],
         key="vertical2_api_provider",
     )
 
@@ -1020,4 +1387,8 @@ def render_vertical2_api_event() -> None:
         _render_statsbomb_provider(show_technical_info=show_technical_info)
         return
 
-    _render_api_football_provider(show_technical_info=show_technical_info)
+    if provider == "API-Football":
+        _render_api_football_provider(show_technical_info=show_technical_info)
+        return
+
+    _render_sportmonks_provider(show_technical_info=show_technical_info)

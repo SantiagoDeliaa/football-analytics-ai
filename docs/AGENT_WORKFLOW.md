@@ -12,10 +12,21 @@
 - No hardcodear secretos ni credenciales.
 - Si se agrega persistencia a Computer Vision, hacerlo en FastAPI + repository propio.
 - No tocar `process_video.py` ni `clip_video_simple.py` para resolver historial.
+- No implementar nuevas features en Streamlit.
+- Toda nueva UI debe ir en `front-tip/`.
+- React debe consumir `FastAPI`; no conectar providers directo al frontend.
+- Toda lógica de negocio debe vivir en `src/`.
 
 ## Regla de arquitectura en Event Data
 Todo cambio debe respetar:
 `Provider → Ingestion/Adapter → Canonical Model → Metrics → Insights → UI`
+
+## Regla de providers
+- Los providers externos se conectan solo desde `src/services/`.
+- Los modelos canonicos son el contrato interno estable.
+- `StatsBomb` sigue siendo el provider tactico con mapas.
+- `Sportmonks` se usa para contexto, timeline, lineups, stats y expected metrics.
+- `Sportmonks` no debe habilitar mapas de cancha si no hay coordenadas confirmadas.
 
 ## Regla de arquitectura para AI Tactical Coach
 - El AI Tactical Coach de Vertical 2 debe consumir contexto tactico estructurado, no raw provider data completo por defecto.
@@ -42,6 +53,7 @@ Todo cambio debe respetar:
 - Frontend: correr con `npm run test -- --run`.
 - Typecheck frontend: `npx tsc -b`.
 - `tests/test_frontend_regression.py` pertenece al entorno Python/legacy-compat y no reemplaza los tests Vitest de `front-tip`.
+- Si hace falta validar el legacy Streamlit, instalar aparte con `python -m pip install -r requirements-legacy.txt`.
 
 ## Mantenimiento de documentación
 - Si cambia modelo canónico: actualizar `docs/CANONICAL_EVENT_MODEL.md`.

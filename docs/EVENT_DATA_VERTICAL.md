@@ -14,8 +14,11 @@ Transformar eventos de partido (PDF o API) en lectura táctica accionable: métr
 ## Flujo Datos por API
 - Provider activo: StatsBomb Open Data.
 - Provider activo: API-Football / API-SPORTS.
+- Provider técnico inicial: Sportmonks para Match Center, timeline, lineups, estadísticas y expected metrics.
 - API-Football requiere `API_FOOTBALL_KEY` por variable de entorno.
 - API-Football puede traer cobertura amplia y partidos actuales, pero no siempre ofrece coordenadas event-level.
+- StatsBomb sigue siendo el provider táctico principal para mapas de cancha y visualizaciones espaciales.
+- Sportmonks se usa inicialmente para contexto, timeline, lineups, stats y expected metrics, sin habilitar mapas tácticos si no hay coordenadas.
 
 ## Pipeline operativo
 ```text

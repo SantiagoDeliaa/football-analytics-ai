@@ -1,44 +1,77 @@
-# Deuda Técnica y Refactoring
+# Deuda Tecnica y Refactoring
 
-## Actual / MVP
-- UI en Streamlit.
-- Persistencia local con SQLite + JSON.
-- StatsBomb Open Data como primer provider.
-- Métricas heurísticas iniciales.
-- Visualizaciones tácticas iniciales en Plotly.
-- Flujo PDF como demo/fallback temporal en Vertical 2.
+## Estado actual
 
-## Futuro recomendado
-- Backend FastAPI para exponer dominio de datos/analítica.
-- Frontend React/Next.js para UX más robusta.
-- PostgreSQL como persistencia principal.
-- Mayor desacople en repositorios/servicios de dominio.
-- Tests de dominio específicos para métricas e insights.
-- Provider adapters formales por fuente.
-- Autenticación/autorización.
-- Modelo multi-tenant si evoluciona a SaaS.
+- UI principal: `React + TypeScript + Vite` en `front-tip/`
+- Backend principal: `FastAPI` en `api/`
+- Core analitico: `src/`
+- Legacy archivado: `legacy/streamlit/`
 
-## Recomendación de arquitectura
-- Priorizar **modular monolith** antes de microservicios.
-- Microservicios solo cuando exista:
-  - escala operativa real,
-  - equipo con ownership claro por dominio,
-  - necesidad de despliegue independiente.
+## Decision del refactor
+
+- `Streamlit` deja de ser parte del flujo principal.
+- Se elimina `streamlit` de `requirements.txt`.
+- Se crea `requirements-legacy.txt` para ejecutar el legacy solo cuando haga falta.
+- Se archivan los entrypoints legacy en `legacy/streamlit/`.
+- Se extraen helpers puros desde la UI legacy a `src/services/presentation/`.
+
+## Auditoria de archivos legacy
+
+### A. Core analitico reusable
+
+- `src/services/`
+- `src/controllers/`
+- `src/services/providers/`
+- `src/services/canonical_models.py`
+- `src/services/presentation/`
+- `src/services/open_event_visualizations.py`
+
+### B. UI legacy Streamlit
+
+- `legacy/streamlit/app.py`
+- `src/verticals/vertical2.py`
+- `src/verticals/vertical2_api_event.py`
+- `src/verticals/vertical1.py`
+- `src/verticals/vertical1_legacy.py`
+- `src/verticals/home.py`
+- `src/utils/ui/`
+
+### C. Documentacion a mantener actualizada
+
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/TECH_DEBT_AND_REFACTORING.md`
+- `docs/AGENT_WORKFLOW.md`
+- `docs/providers/SPORTMONKS_INTEGRATION.md`
+
+### D. Tests legacy o de compatibilidad
+
+- `tests/test_frontend_regression.py`
+- `tests/test_vertical2_sportmonks_ui.py`
+
+Estas pruebas siguen siendo utiles para compatibilidad de la capa legacy, pero no representan la arquitectura principal del frontend moderno.
+
+### E. Dependencias requeridas
+
+- `fastapi`, `uvicorn`, librerias analiticas y de datos: requeridas por el flujo principal
+- `streamlit`: dependencia legacy, separada en `requirements-legacy.txt`
+
+## Deuda tecnica vigente
+
+- Aun existen modulos Streamlit en `src/verticals/*` y `src/utils/ui/*`.
+- Parte de las regresiones Python siguen validando UI legacy y no componentes React.
+- La experiencia provider-agnostic final de Sportmonks todavia no esta expuesta por FastAPI + React.
+- Persistencia local y jobs en memoria siguen siendo suficientes para demo, no para produccion multiusuario.
 
 ## Riesgos actuales
-- Acoplamiento funcional por vivir todo en Streamlit.
-- Heurísticas de métricas sin calibración completa.
-- Persistencia local útil para demo, no para producción multiusuario.
-- Computer Vision moderno depende de jobs en memoria; el historial persistido reduce ese riesgo pero no reemplaza una cola real.
 
-## Estado de persistencia moderna
-- Event Data y Computer Vision ya comparten el patrón `SQLite + JSON sidecar`.
-- La persistencia de Computer Vision debe seguir fuera del pipeline pesado para no contaminar `process_video.py`.
-- Si el proyecto evoluciona, conviene unificar repositories y migraciones antes de pasar a PostgreSQL.
+- Mantener dos superficies de UI en paralelo aumenta costo de mantenimiento.
+- Algunas rutas legacy todavia sirven como referencia funcional y no se pueden borrar de golpe sin perder cobertura.
+- Computer Vision moderno depende de jobs en memoria; el historial persistido reduce el riesgo pero no reemplaza una cola real.
 
-## Legacy Streamlit
-- Streamlit legacy convive temporalmente con la arquitectura oficial `React + FastAPI`.
-- La UI oficial actual del proyecto es `front-tip/` consumiendo `api/`.
-- Streamlit queda como legacy y referencia funcional, no como superficie principal para nuevas features.
-- No agregar nuevas features en Streamlit salvo instrucción explícita.
-- Futuro recomendado: archivar o eliminar el legacy cuando React cubra completamente la experiencia objetivo.
+## Proximo objetivo de refactor
+
+- Seguir moviendo cualquier helper reusable fuera de Streamlit.
+- Reducir gradualmente `tests/test_frontend_regression.py` a compatibilidad minima.
+- Exponer Match Center de Sportmonks por FastAPI y consumirlo desde React.
+- Eliminar definitivamente el legacy cuando React + FastAPI cubran todo el alcance activo.

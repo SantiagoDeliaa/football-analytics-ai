@@ -3,6 +3,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional in non-UI test environments
     st = None
 
+from src.services.presentation import apply_plotly_dark_theme
+
 
 def _require_streamlit() -> None:
     if st is None:
@@ -282,33 +284,3 @@ def render_status_card(title: str, value: str) -> None:
     )
 
 
-def apply_plotly_dark_theme(fig) -> None:
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#0f131a",
-        plot_bgcolor="#141b24",
-        font=dict(color="#d6deea"),
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)",
-            borderwidth=0,
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-        ),
-        margin=dict(l=24, r=24, t=56, b=36),
-        hoverlabel=dict(bgcolor="#0b0d11", bordercolor="#2a3342"),
-    )
-    fig.update_xaxes(
-        showgrid=True,
-        gridcolor="rgba(120, 137, 164, 0.18)",
-        zeroline=False,
-        linecolor="rgba(120, 137, 164, 0.3)",
-    )
-    fig.update_yaxes(
-        showgrid=True,
-        gridcolor="rgba(120, 137, 164, 0.18)",
-        zeroline=False,
-        linecolor="rgba(120, 137, 164, 0.3)",
-    )
