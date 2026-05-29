@@ -16,12 +16,14 @@ from api.schemas import EventDataResultResponse
 from api.schemas import MatchResponse
 from api.schemas import ProcessedMatchSummaryResponse
 from api.schemas import PdfAnalysisResponse
+from api.schemas import SportmonksMatchCenterResponse
 from api.services.event_data_service import answer_ai_coach_from_payload
 from api.services.event_data_service import analyze_match
 from api.services.event_data_service import analyze_pdf_report
 from api.services.event_data_service import delete_processed_history_entry
 from api.services.event_data_service import generate_ai_coach_diagnosis
 from api.services.event_data_service import get_ai_coach_status
+from api.services.event_data_service import get_sportmonks_match_center_payload
 from api.services.event_data_service import list_api_football_countries
 from api.services.event_data_service import list_api_football_fixtures
 from api.services.event_data_service import list_api_football_leagues
@@ -65,6 +67,14 @@ def get_api_football_leagues_endpoint(
 @router.get("/api-football/fixtures", response_model=list[MatchResponse])
 def get_api_football_fixtures_endpoint(league_id: int | str, season: int | str) -> list[dict]:
     return list_api_football_fixtures(league_id=league_id, season=season)
+
+
+@router.get(
+    "/providers/sportmonks/matches/{match_id}/match-center",
+    response_model=SportmonksMatchCenterResponse,
+)
+def get_sportmonks_match_center_endpoint(match_id: str) -> dict:
+    return get_sportmonks_match_center_payload(match_id)
 
 
 @router.post("/analyze", response_model=EventDataResultResponse)

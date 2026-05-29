@@ -3,6 +3,7 @@ import { createBrowserRouter } from 'react-router-dom'
 import {
   loadHomePage,
   loadNotFoundPage,
+  loadSportmonksMatchCenterPage,
   loadVertical1Page,
   loadVertical2Page,
 } from './modulePreload'
@@ -32,6 +33,11 @@ const Vertical2Page = lazy(async () => {
   return { default: module.Vertical2Page }
 })
 
+const SportmonksMatchCenterPage = lazy(async () => {
+  const module = await loadSportmonksMatchCenterPage()
+  return { default: module.SportmonksMatchCenterPage }
+})
+
 function withRouteLoader(node: React.ReactNode) {
   return <Suspense fallback={<LoadingState label="Cargando módulo..." />}>{node}</Suspense>
 }
@@ -52,6 +58,10 @@ export const router = createBrowserRouter([
       { path: 'vertical1', element: withRouteLoader(<Vertical1Page />) },
       { path: 'vertical2', element: withRouteLoader(<Vertical2Page />) },
       { path: 'vertical2/match/:matchId', element: withRouteLoader(<Vertical2Page />) },
+      {
+        path: 'match-center/sportmonks/:matchId',
+        element: withRouteLoader(<SportmonksMatchCenterPage />),
+      },
       { path: '*', element: withRouteLoader(<NotFoundPage />) },
     ],
   },

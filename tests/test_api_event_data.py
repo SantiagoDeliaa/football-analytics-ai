@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -123,6 +124,134 @@ def test_event_data_api_football_fixtures_happy_path(monkeypatch):
     assert response.json()[0]["match_id"] == 555
 
 
+def test_event_data_sportmonks_match_center_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        "api.routers.event_data.get_sportmonks_match_center_payload",
+        lambda match_id: {
+            "provider": "sportmonks",
+            "match": {
+                "match_id": str(match_id),
+                "competition": "Liga Profesional de Futbol",
+                "season": "2026",
+                "date": "2026-05-02 19:15:00",
+                "status": "FT",
+                "venue": {"name": "Estadio Unico", "city": "Santiago del Estero"},
+                "home_team": {"id": "14212", "name": "Central Cordoba SdE", "score": 1},
+                "away_team": {"id": "587", "name": "Boca Juniors", "score": 2},
+            },
+            "expected_metrics": {
+                "home": {
+                    "team_name": "Central Cordoba SdE",
+                    "xg": 1.46,
+                    "xgot": 2.43,
+                    "xpts": 1.39,
+                    "npxg": 1.46,
+                    "xg_open_play": None,
+                    "xg_set_play": None,
+                    "xg_free_kicks": None,
+                    "shooting_performance": None,
+                    "xga": 1.44,
+                },
+                "away": {
+                    "team_name": "Boca Juniors",
+                    "xg": 1.44,
+                    "xgot": 1.60,
+                    "xpts": 1.37,
+                    "npxg": 1.44,
+                    "xg_open_play": None,
+                    "xg_set_play": None,
+                    "xg_free_kicks": None,
+                    "shooting_performance": None,
+                    "xga": 1.46,
+                },
+            },
+            "timeline": [
+                {
+                    "minute": 43,
+                    "extra_minute": None,
+                    "team_name": "Boca Juniors",
+                    "player_name": "Alan Velasco",
+                    "related_player_name": "Williams Alarcon",
+                    "event_type": "goal",
+                    "event_label": "Gol",
+                    "result": "0-1",
+                    "description": "Gol de Boca Juniors",
+                }
+            ],
+            "lineups": {
+                "home": {
+                    "team_id": "14212",
+                    "team_name": "Central Cordoba SdE",
+                    "formation": "4-4-2",
+                    "coach": "Omar De Felippe",
+                    "starters": [],
+                    "substitutes": [],
+                },
+                "away": {
+                    "team_id": "587",
+                    "team_name": "Boca Juniors",
+                    "formation": "4-3-3",
+                    "coach": "Diego Martinez",
+                    "starters": [],
+                    "substitutes": [],
+                },
+            },
+            "team_stats": {
+                "home": {"team_id": "14212", "team_name": "Central Cordoba SdE", "stats": []},
+                "away": {"team_id": "587", "team_name": "Boca Juniors", "stats": []},
+            },
+            "player_stats": [],
+            "derived_metrics": {
+                "home": {
+                    "eficacia_ofensiva": 0.68,
+                    "rendimiento_definicion": -0.46,
+                    "amenaza_jugada": None,
+                    "amenaza_pelota_parada": None,
+                },
+                "away": {
+                    "eficacia_ofensiva": 1.39,
+                    "rendimiento_definicion": 0.56,
+                    "amenaza_jugada": None,
+                    "amenaza_pelota_parada": None,
+                },
+            },
+            "insights": ["Boca Juniors gano en un partido equilibrado segun xG."],
+            "data_quality": {
+                "level": "media",
+                "has_xg": True,
+                "has_xgot": True,
+                "has_xpts": True,
+                "has_lineups": True,
+                "has_player_stats": True,
+                "has_team_stats": True,
+                "has_event_timeline": True,
+                "has_event_coordinates": False,
+                "enabled_modules": {
+                    "match_center": True,
+                    "expected_metrics": True,
+                    "timeline": True,
+                    "lineups": True,
+                    "team_stats": True,
+                    "player_stats": True,
+                    "event_maps": False,
+                    "shot_map": False,
+                    "pass_network": False,
+                },
+                "message": "No incluye coordenadas de eventos.",
+            },
+        },
+    )
+
+    response = client.get("/api/v1/event-data/providers/sportmonks/matches/19636404/match-center")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "sportmonks"
+    assert payload["match"]["away_team"]["name"] == "Boca Juniors"
+    assert payload["data_quality"]["enabled_modules"]["event_maps"] is False
+    assert "raw_payload" not in payload
+
+
 def test_event_data_analyze_returns_400_for_invalid_provider(monkeypatch):
     monkeypatch.setattr(
         "api.routers.event_data.analyze_match",
@@ -138,6 +267,18 @@ def test_event_data_analyze_returns_400_for_invalid_provider(monkeypatch):
     )
 
     assert response.status_code == 400
+
+
+def test_event_data_service_sportmonks_match_center_requires_configuration(monkeypatch):
+    from api.services import event_data_service
+
+    monkeypatch.setattr(event_data_service, "is_sportmonks_configured", lambda: False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        event_data_service.get_sportmonks_match_center_payload("19636404")
+
+    assert exc_info.value.status_code == 400
+    assert "Sportmonks no está configurado" in exc_info.value.detail
 
 
 def test_event_data_analyze_happy_path(monkeypatch):

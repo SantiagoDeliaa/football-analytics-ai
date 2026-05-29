@@ -36,6 +36,10 @@ from src.services.storage.event_data_repository import delete_processed_match
 from src.services.storage.event_data_repository import get_processed_matches
 from src.services.storage.event_data_repository import load_processed_match_payloads
 from src.services.storage.event_data_repository import save_processed_match
+from src.services.providers import SportmonksMatchCenterError
+from src.services.providers import SportmonksMatchCenterNotFoundError
+from src.services.providers import build_sportmonks_match_center
+from src.services.providers import is_sportmonks_configured
 
 STATSBOMB_PROVIDER = "StatsBomb Open Data"
 API_FOOTBALL_PROVIDER = "API-Football"
@@ -129,6 +133,29 @@ def list_matches(
     fixtures = get_api_football_fixtures(league_id=competition_id, season=season_id)
     _raise_for_api_football_error_if_needed(fixtures)
     return fixtures
+
+
+def get_sportmonks_match_center_payload(match_id: str) -> dict[str, Any]:
+    normalized_match_id = str(match_id or "").strip()
+    if not normalized_match_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="`match_id` es obligatorio.",
+        )
+    if not is_sportmonks_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Sportmonks no está configurado. Agregá SPORTMONKS_API_KEY en el archivo .env "
+                "o en las variables de entorno para usar este proveedor."
+            ),
+        )
+    try:
+        return build_sportmonks_match_center(normalized_match_id)
+    except SportmonksMatchCenterNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except SportmonksMatchCenterError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
 
 def analyze_match(payload: dict[str, Any]) -> dict[str, Any]:

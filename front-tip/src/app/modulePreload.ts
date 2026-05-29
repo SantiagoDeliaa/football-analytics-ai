@@ -16,6 +16,10 @@ export function loadVertical2Page() {
   return import('../pages/Vertical2Page')
 }
 
+export function loadSportmonksMatchCenterPage() {
+  return import('../pages/SportmonksMatchCenterPage')
+}
+
 export function loadTimelineCharts() {
   return import('../components/vertical1/TimelineCharts')
 }

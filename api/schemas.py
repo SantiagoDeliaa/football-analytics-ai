@@ -42,6 +42,164 @@ class MatchResponse(BaseModel):
     display_name: str
 
 
+class SportmonksVenueResponse(BaseModel):
+    name: str | None = None
+    city: str | None = None
+
+
+class SportmonksTeamSummaryResponse(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    score: int | None = None
+
+
+class SportmonksMatchSummaryResponse(BaseModel):
+    match_id: str
+    competition: str | None = None
+    season: str | None = None
+    date: str | None = None
+    status: str | None = None
+    venue: SportmonksVenueResponse
+    home_team: SportmonksTeamSummaryResponse
+    away_team: SportmonksTeamSummaryResponse
+
+
+class SportmonksExpectedMetricsSideResponse(BaseModel):
+    team_name: str | None = None
+    xg: float | None = None
+    xgot: float | None = None
+    xpts: float | None = None
+    npxg: float | None = None
+    xg_open_play: float | None = None
+    xg_set_play: float | None = None
+    xg_free_kicks: float | None = None
+    shooting_performance: float | None = None
+    xga: float | None = None
+
+
+class SportmonksExpectedMetricsResponse(BaseModel):
+    home: SportmonksExpectedMetricsSideResponse
+    away: SportmonksExpectedMetricsSideResponse
+
+
+class SportmonksTimelineItemResponse(BaseModel):
+    minute: int | None = None
+    extra_minute: int | None = None
+    team_name: str | None = None
+    player_name: str | None = None
+    related_player_name: str | None = None
+    event_type: str | None = None
+    event_label: str | None = None
+    result: str | None = None
+    description: str | None = None
+
+
+class SportmonksLineupPlayerResponse(BaseModel):
+    player_id: str | None = None
+    player_name: str | None = None
+    position: str | None = None
+    jersey_number: int | None = None
+    minutes_played: int | None = None
+    rating: float | None = None
+    is_starter: bool | None = None
+
+
+class SportmonksLineupSideResponse(BaseModel):
+    team_id: str | None = None
+    team_name: str | None = None
+    formation: str | None = None
+    coach: str | None = None
+    starters: list[SportmonksLineupPlayerResponse] = Field(default_factory=list)
+    substitutes: list[SportmonksLineupPlayerResponse] = Field(default_factory=list)
+
+
+class SportmonksLineupsResponse(BaseModel):
+    home: SportmonksLineupSideResponse
+    away: SportmonksLineupSideResponse
+
+
+class SportmonksStatEntryResponse(BaseModel):
+    key: str
+    label: str
+    value: Any | None = None
+
+
+class SportmonksTeamStatsSideResponse(BaseModel):
+    team_id: str | None = None
+    team_name: str | None = None
+    stats: list[SportmonksStatEntryResponse] = Field(default_factory=list)
+
+
+class SportmonksTeamStatsResponse(BaseModel):
+    home: SportmonksTeamStatsSideResponse
+    away: SportmonksTeamStatsSideResponse
+
+
+class SportmonksPlayerStatsResponse(BaseModel):
+    player_id: str | None = None
+    player_name: str | None = None
+    team_id: str | None = None
+    team_name: str | None = None
+    position: str | None = None
+    jersey_number: int | None = None
+    is_starter: bool | None = None
+    minutes_played: int | None = None
+    rating: float | None = None
+    stats: list[SportmonksStatEntryResponse] = Field(default_factory=list)
+    insights: list[str] = Field(default_factory=list)
+
+
+class SportmonksDerivedMetricsSideResponse(BaseModel):
+    eficacia_ofensiva: float | None = None
+    rendimiento_definicion: float | None = None
+    amenaza_jugada: float | None = None
+    amenaza_pelota_parada: float | None = None
+
+
+class SportmonksDerivedMetricsResponse(BaseModel):
+    home: SportmonksDerivedMetricsSideResponse
+    away: SportmonksDerivedMetricsSideResponse
+
+
+class SportmonksEnabledModulesResponse(BaseModel):
+    match_center: bool
+    expected_metrics: bool
+    timeline: bool
+    lineups: bool
+    team_stats: bool
+    player_stats: bool
+    event_maps: bool
+    shot_map: bool
+    pass_network: bool
+
+
+class SportmonksDataQualityResponse(BaseModel):
+    level: str
+    has_xg: bool
+    has_xgot: bool
+    has_xpts: bool
+    has_lineups: bool
+    has_player_stats: bool
+    has_team_stats: bool
+    has_event_timeline: bool
+    has_event_coordinates: bool
+    enabled_modules: SportmonksEnabledModulesResponse
+    message: str
+
+
+class SportmonksMatchCenterResponse(BaseModel):
+    provider: Literal["sportmonks"]
+    match: SportmonksMatchSummaryResponse
+    expected_metrics: SportmonksExpectedMetricsResponse
+    timeline: list[SportmonksTimelineItemResponse] = Field(default_factory=list)
+    lineups: SportmonksLineupsResponse
+    team_stats: SportmonksTeamStatsResponse
+    player_stats: list[SportmonksPlayerStatsResponse] = Field(default_factory=list)
+    derived_metrics: SportmonksDerivedMetricsResponse
+    insights: list[str] = Field(default_factory=list)
+    data_quality: SportmonksDataQualityResponse
+
+
 class EventDataAnalyzeRequest(BaseModel):
     provider: str
     match_id: int | str

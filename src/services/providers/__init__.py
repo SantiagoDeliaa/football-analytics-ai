@@ -15,6 +15,11 @@ from .sportmonks_adapter import (
     get_sportmonks_data_availability_for_fixture,
     get_sportmonks_match_context,
 )
+from .sportmonks_match_center import (
+    SportmonksMatchCenterError,
+    SportmonksMatchCenterNotFoundError,
+    build_sportmonks_match_center,
+)
 from .sportmonks_client import (
     SPORTMONKS_BASE_URL,
     SPORTMONKS_DEFAULT_FIXTURE_INCLUDE,
@@ -102,6 +107,9 @@ __all__ = [
     "get_available_sportmonks_competitions",
     "get_sportmonks_match_context",
     "get_sportmonks_data_availability_for_fixture",
+    "build_sportmonks_match_center",
+    "SportmonksMatchCenterError",
+    "SportmonksMatchCenterNotFoundError",
     "SPORTMONKS_STAT_LABELS_ES",
     "SPORTMONKS_EVENT_LABELS_ES",
     "SPORTMONKS_EXPECTED_LABELS_ES",
