@@ -9,6 +9,8 @@ from typing import Any
 from src.services.storage.database import PROJECT_ROOT
 from src.services.storage.database import get_db_connection
 from src.services.storage.database import initialize_event_data_db
+from src.services.storage.postgres_event_data_repository import PostgresEventDataRepository
+from src.services.storage.settings import load_persistence_settings
 
 
 def _provider_slug(provider: str) -> str:
@@ -47,183 +49,242 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+class LocalEventDataRepository:
+    def initialize(self) -> None:
+        initialize_event_data_db()
+
+    def save_processed_match(
+        self,
+        *,
+        provider: str,
+        match_id: str,
+        match_metadata: dict[str, Any],
+        raw_events: Any,
+        canonical_events: list[dict[str, Any]],
+        metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        initialize_event_data_db()
+        raw_path, canonical_path, metrics_path = _build_storage_paths(provider, match_id)
+        _write_json(raw_path, raw_events)
+        _write_json(canonical_path, canonical_events)
+        _write_json(metrics_path, metrics)
+
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO processed_matches (
+                    provider,
+                    match_id,
+                    competition_name,
+                    season_name,
+                    home_team,
+                    away_team,
+                    match_date,
+                    raw_path,
+                    canonical_path,
+                    metrics_path,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider, match_id) DO UPDATE SET
+                    competition_name=excluded.competition_name,
+                    season_name=excluded.season_name,
+                    home_team=excluded.home_team,
+                    away_team=excluded.away_team,
+                    match_date=excluded.match_date,
+                    raw_path=excluded.raw_path,
+                    canonical_path=excluded.canonical_path,
+                    metrics_path=excluded.metrics_path,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    provider,
+                    str(match_id),
+                    str(match_metadata.get("competition_name", "")),
+                    str(match_metadata.get("season_name", "")),
+                    str(match_metadata.get("home_team", "")),
+                    str(match_metadata.get("away_team", "")),
+                    str(match_metadata.get("match_date", "")),
+                    str(raw_path),
+                    str(canonical_path),
+                    str(metrics_path),
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
+
+        return {
+            "provider": provider,
+            "match_id": str(match_id),
+            "raw_path": str(raw_path),
+            "canonical_path": str(canonical_path),
+            "metrics_path": str(metrics_path),
+        }
+
+    def get_processed_matches(self, limit: int = 20) -> list[dict[str, Any]]:
+        initialize_event_data_db()
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    provider,
+                    match_id,
+                    competition_name,
+                    season_name,
+                    home_team,
+                    away_team,
+                    match_date,
+                    created_at,
+                    updated_at
+                FROM processed_matches
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    def get_processed_match(self, provider: str, match_id: str) -> dict[str, Any] | None:
+        initialize_event_data_db()
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM processed_matches
+                WHERE provider = ? AND match_id = ?
+                LIMIT 1
+                """,
+                (provider, str(match_id)),
+            )
+            row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def load_processed_match_payloads(self, *, provider: str, match_id: str) -> dict[str, Any] | None:
+        match_row = self.get_processed_match(provider, match_id)
+        if not match_row:
+            return None
+
+        raw_path = Path(str(match_row.get("raw_path", "")))
+        canonical_path = Path(str(match_row.get("canonical_path", "")))
+        metrics_path = Path(str(match_row.get("metrics_path", "")))
+        if not raw_path.exists() or not canonical_path.exists() or not metrics_path.exists():
+            return None
+
+        return {
+            "metadata": match_row,
+            "raw_events": _read_json(raw_path),
+            "canonical_events": _read_json(canonical_path),
+            "metrics": _read_json(metrics_path),
+        }
+
+    def has_processed_match(self, provider: str, match_id: str) -> bool:
+        return self.get_processed_match(provider, match_id) is not None
+
+    def delete_processed_match(self, provider: str, match_id: str) -> dict[str, Any]:
+        initialize_event_data_db()
+        match_row = self.get_processed_match(provider, match_id)
+        if not match_row:
+            return {
+                "ok": False,
+                "message": f"No se encontró el partido procesado {provider}:{match_id}.",
+            }
+
+        warnings: list[str] = []
+        file_fields = ("raw_path", "canonical_path", "metrics_path")
+
+        for field_name in file_fields:
+            raw_path = str(match_row.get(field_name) or "").strip()
+            if not raw_path:
+                continue
+
+            file_path = Path(raw_path)
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except OSError as exc:
+                warnings.append(f"{field_name}: {exc}")
+
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                DELETE FROM processed_matches
+                WHERE provider = ? AND match_id = ?
+                """,
+                (provider, str(match_id)),
+            )
+            connection.commit()
+
+        base_message = f"Se eliminó el partido procesado {provider}:{match_id} del historial local persistido."
+        if warnings:
+            return {
+                "ok": True,
+                "message": f"{base_message} Algunos archivos no pudieron borrarse: {'; '.join(warnings)}",
+            }
+
+        return {"ok": True, "message": base_message}
+
+
+def _get_event_data_repository() -> Any:
+    settings = load_persistence_settings()
+    if settings.persistence_backend == "postgres":
+        return PostgresEventDataRepository(settings=settings)
+    return LocalEventDataRepository()
+
+
+def initialize_event_data_persistence() -> dict[str, str]:
+    settings = load_persistence_settings()
+    repository = _get_event_data_repository()
+    repository.initialize()
+    return {
+        "persistence_backend": settings.persistence_backend,
+        "storage_backend": settings.storage_backend,
+    }
+
+
 def save_processed_match(
     provider: str,
     match_id: str,
     match_metadata: dict[str, Any],
-    raw_events: list[dict[str, Any]],
+    raw_events: Any,
     canonical_events: list[dict[str, Any]],
     metrics: dict[str, Any],
 ) -> dict[str, Any]:
-    initialize_event_data_db()
-    raw_path, canonical_path, metrics_path = _build_storage_paths(provider, match_id)
-    _write_json(raw_path, raw_events)
-    _write_json(canonical_path, canonical_events)
-    _write_json(metrics_path, metrics)
-
-    now = datetime.now(timezone.utc).isoformat()
-    with get_db_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            INSERT INTO processed_matches (
-                provider,
-                match_id,
-                competition_name,
-                season_name,
-                home_team,
-                away_team,
-                match_date,
-                raw_path,
-                canonical_path,
-                metrics_path,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(provider, match_id) DO UPDATE SET
-                competition_name=excluded.competition_name,
-                season_name=excluded.season_name,
-                home_team=excluded.home_team,
-                away_team=excluded.away_team,
-                match_date=excluded.match_date,
-                raw_path=excluded.raw_path,
-                canonical_path=excluded.canonical_path,
-                metrics_path=excluded.metrics_path,
-                updated_at=excluded.updated_at
-            """,
-            (
-                provider,
-                str(match_id),
-                str(match_metadata.get("competition_name", "")),
-                str(match_metadata.get("season_name", "")),
-                str(match_metadata.get("home_team", "")),
-                str(match_metadata.get("away_team", "")),
-                str(match_metadata.get("match_date", "")),
-                str(raw_path),
-                str(canonical_path),
-                str(metrics_path),
-                now,
-                now,
-            ),
-        )
-        connection.commit()
-
-    return {
-        "provider": provider,
-        "match_id": str(match_id),
-        "raw_path": str(raw_path),
-        "canonical_path": str(canonical_path),
-        "metrics_path": str(metrics_path),
-    }
+    return _get_event_data_repository().save_processed_match(
+        provider=provider,
+        match_id=match_id,
+        match_metadata=match_metadata,
+        raw_events=raw_events,
+        canonical_events=canonical_events,
+        metrics=metrics,
+    )
 
 
 def get_processed_matches(limit: int = 20) -> list[dict[str, Any]]:
-    initialize_event_data_db()
-    with get_db_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            SELECT
-                provider,
-                match_id,
-                competition_name,
-                season_name,
-                home_team,
-                away_team,
-                match_date,
-                created_at,
-                updated_at
-            FROM processed_matches
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (int(limit),),
-        )
-        rows = cursor.fetchall()
-    return [dict(row) for row in rows]
+    return _get_event_data_repository().get_processed_matches(limit=limit)
 
 
 def get_processed_match(provider: str, match_id: str) -> dict[str, Any] | None:
-    initialize_event_data_db()
-    with get_db_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            SELECT *
-            FROM processed_matches
-            WHERE provider = ? AND match_id = ?
-            LIMIT 1
-            """,
-            (provider, str(match_id)),
-        )
-        row = cursor.fetchone()
-    return dict(row) if row else None
+    return _get_event_data_repository().get_processed_match(provider, match_id)
 
 
 def load_processed_match_payloads(provider: str, match_id: str) -> dict[str, Any] | None:
-    match_row = get_processed_match(provider, match_id)
-    if not match_row:
-        return None
-
-    raw_path = Path(str(match_row.get("raw_path", "")))
-    canonical_path = Path(str(match_row.get("canonical_path", "")))
-    metrics_path = Path(str(match_row.get("metrics_path", "")))
-    if not raw_path.exists() or not canonical_path.exists() or not metrics_path.exists():
-        return None
-
-    return {
-        "metadata": match_row,
-        "raw_events": _read_json(raw_path),
-        "canonical_events": _read_json(canonical_path),
-        "metrics": _read_json(metrics_path),
-    }
+    return _get_event_data_repository().load_processed_match_payloads(
+        provider=provider,
+        match_id=match_id,
+    )
 
 
 def has_processed_match(provider: str, match_id: str) -> bool:
-    return get_processed_match(provider, match_id) is not None
+    return _get_event_data_repository().has_processed_match(provider, match_id)
 
 
 def delete_processed_match(provider: str, match_id: str) -> dict[str, Any]:
-    initialize_event_data_db()
-    match_row = get_processed_match(provider, match_id)
-    if not match_row:
-        return {
-            "ok": False,
-            "message": f"No se encontró el partido procesado {provider}:{match_id}.",
-        }
-
-    warnings: list[str] = []
-    file_fields = ("raw_path", "canonical_path", "metrics_path")
-
-    for field_name in file_fields:
-        raw_path = str(match_row.get(field_name) or "").strip()
-        if not raw_path:
-            continue
-
-        file_path = Path(raw_path)
-        try:
-            if file_path.exists():
-                file_path.unlink()
-        except OSError as exc:
-            warnings.append(f"{field_name}: {exc}")
-
-    with get_db_connection() as connection:
-        cursor = connection.cursor()
-        cursor.execute(
-            """
-            DELETE FROM processed_matches
-            WHERE provider = ? AND match_id = ?
-            """,
-            (provider, str(match_id)),
-        )
-        connection.commit()
-
-    base_message = f"Se eliminó el partido procesado {provider}:{match_id} del historial local persistido."
-    if warnings:
-        return {
-            "ok": True,
-            "message": f"{base_message} Algunos archivos no pudieron borrarse: {'; '.join(warnings)}",
-        }
-
-    return {"ok": True, "message": base_message}
+    return _get_event_data_repository().delete_processed_match(provider, match_id)

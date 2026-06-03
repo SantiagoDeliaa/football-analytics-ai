@@ -39,6 +39,7 @@ from src.services.presentation import build_player_stats_table
 from src.services.presentation import build_sportmonks_player_insights
 from src.services.presentation import build_team_stats_table
 from src.services.presentation import build_timeline_table
+from src.services.presentation import _render_stat_value
 from src.services.presentation import format_availability_status
 from src.services.presentation import format_sportmonks_match_title
 from src.services.providers.sportmonks_adapter import (
@@ -51,9 +52,9 @@ from src.services.providers.sportmonks_adapter import (
     get_sportmonks_match_context as adapter_get_sportmonks_match_context,
 )
 from src.services.providers.sportmonks_client import is_sportmonks_configured
-from src.services.storage.database import initialize_event_data_db
 from src.services.storage.event_data_repository import get_processed_matches
 from src.services.storage.event_data_repository import has_processed_match
+from src.services.storage.event_data_repository import initialize_event_data_persistence
 from src.services.storage.event_data_repository import load_processed_match_payloads
 from src.services.storage.event_data_repository import save_processed_match
 from src.utils.ui.ai_coach_panel import render_ai_coach_panel
@@ -1373,9 +1374,14 @@ def render_vertical2_api_event() -> None:
     show_technical_info = st.checkbox("Mostrar información técnica", value=False)
     _render_environment_config_status(show_technical_info=show_technical_info)
     try:
-        initialize_event_data_db()
+        persistence_status = initialize_event_data_persistence()
+        if show_technical_info:
+            st.caption(
+                "Persistencia activa: "
+                f"{persistence_status['persistence_backend']} / storage {persistence_status['storage_backend']}"
+            )
     except Exception as exc:
-        st.warning(f"No se pudo inicializar la persistencia local: {exc}")
+        st.warning(f"No se pudo inicializar la persistencia configurada: {exc}")
 
     provider = _selectbox(
         "Proveedor de datos",

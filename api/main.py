@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,12 +12,20 @@ from fastapi.staticfiles import StaticFiles
 
 from api.routers.computer_vision import router as computer_vision_router
 from api.routers.event_data import router as event_data_router
+from src.services.storage.event_data_repository import initialize_event_data_persistence
+
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI) -> Iterator[None]:
+    initialize_application_state()
+    yield
 
 
 app = FastAPI(
     title="Football Analytics API",
     version="1.0.0",
     description="Backend HTTP para el frontend React de Tactical Intelligence Platform.",
+    lifespan=app_lifespan,
 )
 
 app.add_middleware(
@@ -40,6 +50,10 @@ app.mount(
 
 frontend_dist_dir = project_root / "front-tip" / "dist"
 frontend_index_file = frontend_dist_dir / "index.html"
+
+
+def initialize_application_state() -> dict[str, str]:
+    return initialize_event_data_persistence()
 
 
 def _resolve_frontend_asset(relative_path: str) -> Path | None:

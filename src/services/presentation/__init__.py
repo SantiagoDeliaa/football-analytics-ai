@@ -11,6 +11,7 @@ from src.services.presentation.event_data_presenters import (
     build_timeline_table,
     format_availability_status,
     format_sportmonks_match_title,
+    _render_stat_value,
 )
 from src.services.presentation.plotly_theme import apply_plotly_dark_theme
 
@@ -26,4 +27,5 @@ __all__ = [
     "build_timeline_table",
     "format_availability_status",
     "format_sportmonks_match_title",
+    "_render_stat_value",
 ]

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+
+from src.services.storage.settings import PROJECT_ROOT
+from src.services.storage.settings import load_persistence_settings
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DB_PATH = PROJECT_ROOT / "data" / "tip_event_data.sqlite"
+DB_PATH = load_persistence_settings().sqlite_db_path
 
 
 def get_db_connection() -> sqlite3.Connection:

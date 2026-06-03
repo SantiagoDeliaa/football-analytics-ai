@@ -50,6 +50,7 @@ En este estado del repo, el despliegue objetivo para publicar la UI moderna qued
 - `Infraestructura`:
   - backend FastAPI para React
   - persistencia local en SQLite + JSON
+  - persistencia remota opcional en Neon PostgreSQL + Cloudflare R2
   - Docker Compose para entorno integrado
   - suite de tests backend/frontend/regresión
 
@@ -99,6 +100,47 @@ Backend:
 pip install -r requirements.txt
 uvicorn api.main:app --reload --port 8000
 ```
+
+Configuración de persistencia por entorno:
+
+```bash
+# modo local
+PERSISTENCE_BACKEND=local
+STORAGE_BACKEND=local
+SQLITE_DB_PATH=data/tip_event_data.sqlite
+LOCAL_STORAGE_ROOT=data/storage
+
+# modo remoto
+PERSISTENCE_BACKEND=postgres
+STORAGE_BACKEND=r2
+DATABASE_URL=
+POSTGRES_HOST=
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+POSTGRES_SSLMODE=require
+POSTGRES_CHANNEL_BINDING=require
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+R2_ENDPOINT_URL=
+R2_PUBLIC_BASE_URL=
+```
+
+Aplicar schema base sobre PostgreSQL/Neon:
+
+```bash
+python scripts/apply_postgres_schema.py --database-url "postgresql://..."
+```
+
+Notas:
+
+- Si `DATABASE_URL` está vacío, la app intenta construirlo desde `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_SSLMODE` y `POSTGRES_CHANNEL_BINDING`.
+- `.env` local está ignorado por Git y `.env.example` queda como referencia segura sin secrets reales.
+- Si `STORAGE_BACKEND=r2`, el bucket debe existir y la app requiere `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` y `R2_ENDPOINT_URL`.
+- Para ejecutar una prueba real opt-in contra Cloudflare R2: `RUN_LIVE_R2_TESTS=1 python -m pytest tests/test_r2_live_integration.py`.
 
 Frontend:
 
@@ -168,6 +210,8 @@ Notas:
 - Los tests `test_frontend_regression.py` son regresiones Python sobre la capa legacy/compatibilidad, no Vitest del frontend React.
 - `requirements.txt` ya no instala `streamlit`; si se necesita la UI legacy hay que usar `requirements-legacy.txt`.
 - Si falla un import como `ModuleNotFoundError: fastapi`, el problema es del entorno Python local y no del código del test; volver a instalar `requirements.txt`.
+- Si `PERSISTENCE_BACKEND=postgres`, el backend usa Neon/PostgreSQL para metadata y el storage configurado para payloads grandes.
+- Si `STORAGE_BACKEND=r2`, los payloads grandes pasan a Cloudflare R2 vía cliente S3-compatible.
 
 ### Frontend
 
@@ -264,6 +308,51 @@ Se restauraron fixtures minimos de persistencia local en el workspace para prese
 - `data/event_data/metrics/statsbomb_open_data/3895302.json`
 
 Esos archivos quedan como contexto local y `data/` sigue ignorado por Git para no subir persistencia ni payloads al repositorio.
+
+## Persistencia remota
+
+La persistencia remota actual de `Vertical 2` queda soportada por:
+
+- `Neon PostgreSQL` para metadata, historial, datasets, jobs y referencias.
+- `Cloudflare R2` para payloads grandes y artefactos pesados.
+- `Repository Layer` para desacoplar el dominio de la implementación concreta.
+- `Storage Service` para desacoplar el backend del storage físico.
+
+Regla operativa:
+
+- `DB`: metadata, relaciones, estados, versiones, referencias y resúmenes.
+- `Object Storage`: raw payloads, canonical events completos, metrics grandes, tracking, reportes y exports.
+
+Convención de object keys:
+
+```text
+organizations/{organization_id}/matches/{match_id}/{category}/{provider?}/{subcategory?}/{version}/{file_name}
+```
+
+Ejemplos:
+
+```text
+organizations/local_demo/matches/3895302/raw/statsbomb_open_data/v1/events.json
+organizations/local_demo/matches/3895302/canonical/v1/events.json
+organizations/local_demo/matches/3895302/metrics/event_data_metrics/v1/metrics.json
+```
+
+Documentación operativa ampliada:
+
+- `docs/REMOTE_PERSISTENCE.md`
+
+Migración segura desde persistencia local:
+
+```bash
+# auditoría sin escribir en Neon/R2
+python scripts/migrate_event_data_to_remote.py
+
+# migración real
+python scripts/migrate_event_data_to_remote.py --execute
+
+# reporte estructurado
+python scripts/migrate_event_data_to_remote.py --report-file logs/migration-report.json
+```
 
 ## Verificación recomendada
 

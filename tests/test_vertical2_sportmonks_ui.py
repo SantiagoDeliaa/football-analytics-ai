@@ -180,7 +180,11 @@ def test_vertical2_sportmonks_without_api_key_shows_warning(monkeypatch):
         },
     )
     monkeypatch.setattr(module, "is_sportmonks_configured", lambda: False)
-    monkeypatch.setattr(module, "initialize_event_data_db", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "initialize_event_data_persistence",
+        lambda: {"persistence_backend": "local", "storage_backend": "local"},
+    )
 
     module.render_vertical2_api_event()
 
@@ -202,7 +206,11 @@ def test_vertical2_sportmonks_can_list_fixtures(monkeypatch):
         },
     )
     monkeypatch.setattr(module, "is_sportmonks_configured", lambda: True)
-    monkeypatch.setattr(module, "initialize_event_data_db", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "initialize_event_data_persistence",
+        lambda: {"persistence_backend": "local", "storage_backend": "local"},
+    )
 
     module.render_vertical2_api_event()
 
@@ -230,7 +238,11 @@ def test_vertical2_sportmonks_renders_match_center_from_canonical_context(monkey
         },
     )
     monkeypatch.setattr(module, "is_sportmonks_configured", lambda: True)
-    monkeypatch.setattr(module, "initialize_event_data_db", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "initialize_event_data_persistence",
+        lambda: {"persistence_backend": "local", "storage_backend": "local"},
+    )
 
     module.render_vertical2_api_event()
 
