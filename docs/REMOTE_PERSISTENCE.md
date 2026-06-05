@@ -17,6 +17,11 @@ y habilita el modo remoto:
 - `PERSISTENCE_BACKEND=postgres`
 - `STORAGE_BACKEND=r2`
 
+## Documentos Relacionados
+
+- [DATABASE_ANALYSIS.md](file:///c:/Users/matu_/OneDrive/Escritorio/sport-analytics/football-analytics-ai-recovery/docs/DATABASE_ANALYSIS.md): estrategia consolidada, modelo objetivo, feedback del equipo y estado real de implementación.
+- [PERSISTENCE_HANDOFF.md](file:///c:/Users/matu_/OneDrive/Escritorio/sport-analytics/football-analytics-ai-recovery/docs/PERSISTENCE_HANDOFF.md): handoff corto para onboarding técnico y operación.
+
 ## Regla central
 
 - `DB = metadata, relaciones, estado, permisos, índices, versiones y resúmenes`.

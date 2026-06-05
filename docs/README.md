@@ -12,6 +12,7 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 - Documentación específica de providers e integraciones externas.
 - Métricas tácticas (básicas y propietarias).
 - Persistencia local (SQLite + JSON).
+- Análisis consolidado de base de datos, persistencia remota y estado de implementación.
 - Política de uso de datos.
 - Deuda técnica y roadmap de evolución.
 - Flujo de trabajo para agentes/desarrolladores.
@@ -28,11 +29,12 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 7. `providers/SPORTMONKS_INTEGRATION.md`
 8. `TACTICAL_METRICS.md`
 9. `LOCAL_PERSISTENCE.md`
-10. `DATA_USAGE_POLICY.md`
-11. `TECH_DEBT_AND_REFACTORING.md`
-12. `AGENT_WORKFLOW.md`
-13. `INTEGRATION_VALIDATION.md`
-14. `HUGGINGFACE_DEPLOY.md`
+10. `DATABASE_ANALYSIS.md`
+11. `DATA_USAGE_POLICY.md`
+12. `TECH_DEBT_AND_REFACTORING.md`
+13. `AGENT_WORKFLOW.md`
+14. `INTEGRATION_VALIDATION.md`
+15. `HUGGINGFACE_DEPLOY.md`
 
 ## Cómo usar esta documentación
 - Antes de implementar cambios, leer al menos `PRODUCT_CONTEXT.md` y `ARCHITECTURE.md`.
@@ -42,5 +44,6 @@ Esta carpeta contiene documentación viva para entender el producto, su arquitec
 - Si cambia la integracion base de Sportmonks, actualizar `providers/SPORTMONKS_INTEGRATION.md`.
 - Si cambian métricas o insights, actualizar `TACTICAL_METRICS.md`.
 - Si cambia almacenamiento local, actualizar `LOCAL_PERSISTENCE.md`.
+- Si cambia la estrategia de persistencia remota o el estado real de implementación del modelo, actualizar `DATABASE_ANALYSIS.md`.
 - Si cambia el estado de integración frontend/backend, actualizar `INTEGRATION_VALIDATION.md`.
 - Si cambia la estrategia de despliegue, actualizar `HUGGINGFACE_DEPLOY.md`.
